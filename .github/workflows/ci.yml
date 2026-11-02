@@ -1,0 +1,27 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  CI:
+    name: CI
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: cmake --preset msvc
+
+      - name: Build
+        run: cmake --build --preset release
+
+      - name: Validate
+        shell: powershell
+        run: |
+          Invoke-WebRequest -Uri https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip -OutFile pluginval_Windows.zip
+          Expand-Archive -Path pluginval_Windows.zip -DestinationPath pluginval
+          ./pluginval/pluginval.exe --strictness-level 8 --validate build/Auralis_artefacts/Release/VST3/Auralis.vst3

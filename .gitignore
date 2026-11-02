@@ -1,0 +1,18 @@
+# Build output
+build/
+build-*/
+out/
+
+# IDE
+.vs/
+.vscode/
+*.user
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+#Internal Docummentation
+Plan_Auralis_VST3_Cpp_JUCE_OpenSource.md
+# Note: JUCE/ is a pinned git submodule (tag 9.0.5) — it must stay tracked.
