@@ -4,7 +4,16 @@ Open-source VST3 audio enhancement plugin built with C++20 and JUCE. It provides
 
 ## Status
 
-Early development. Slice 0 (compilable CMake + JUCE project) and Slice 1 (passthrough + master gain prototype) are in progress; features are added and validated slice by slice. Host target: FL Studio.
+v0.2.0. Implemented: master gain, 4-band EQ, bass enhancer, clarity exciter, compressor, FDN reverb, stereo enhancer, lookahead limiter, spectrum analyzer with meters, presets (factory + user JSON), A/B, global intensity and a resizable JUCE GUI. Host target: FL Studio. Remaining: host-side polish and release engineering.
+
+## Features
+
+- Fixed DSP chain: `Gain → EQ → Bass → Clarity → Dynamics → Ambience → Stereo → Limiter`
+- Global **Intensity** control (0 = neutral, 1 = as set), per-parameter host automation (38 stable IDs)
+- **Presets**: 3 factory presets + user presets as editable `.auralis` JSON files with `schema_version`
+- **A/B** comparison and one-click reset, both persisted in the host state
+- Spectrum view (32 log bands, input/output) with RMS meters and stereo correlation
+- Lookahead limiter reports its latency to the host; reverb reports its tail length
 
 ## Requirements
 
@@ -21,7 +30,13 @@ cmake --preset msvc
 cmake --build --preset release
 ```
 
-The VST3 artifact is generated at `build/Auralis_artefacts/Release/VST3/Auralis.vst3`. Copy it to `C:\Program Files\Common Files\VST3` so FL Studio can scan and load it.
+The VST3 artifact is generated at `build/Auralis_artefacts/Release/VST3/Auralis.vst3`. Install it with:
+
+```powershell
+powershell -File tools\install.ps1
+```
+
+Then rescan plugins in FL Studio.
 
 ## License
 
