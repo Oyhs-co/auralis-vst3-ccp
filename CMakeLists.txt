@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(Auralis VERSION 0.1.0 LANGUAGES C CXX)
+project(Auralis VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,7 +24,10 @@ juce_add_plugin(Auralis
 
 target_sources(Auralis PRIVATE
     Source/plugin/PluginProcessor.cpp
+    Source/plugin/PluginEditor.cpp
     Source/plugin/ParameterLayout.cpp
+    Source/presets/PresetManager.cpp
+    Source/ui/SpectrumView.cpp
 )
 
 target_compile_definitions(Auralis PUBLIC

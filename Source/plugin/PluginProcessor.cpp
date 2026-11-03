@@ -3,6 +3,7 @@
 
 #include "PluginProcessor.h"
 #include "ParameterLayout.h"
+#include "PluginEditor.h"
 
 AuralisAudioProcessor::AuralisAudioProcessor()
     : AudioProcessor (BusesProperties()
@@ -18,6 +19,7 @@ void AuralisAudioProcessor::cacheParams()
 {
     params.gain = apvts.getRawParameterValue ("gain");
     params.bypass = apvts.getRawParameterValue ("bypass");
+    params.intensity = apvts.getRawParameterValue ("intensity");
     params.eqLowFreq = apvts.getRawParameterValue ("eq_low_freq");
     params.eqLowGain = apvts.getRawParameterValue ("eq_low_gain");
     params.eqBand1Freq = apvts.getRawParameterValue ("eq_band1_freq");
@@ -80,6 +82,8 @@ void AuralisAudioProcessor::buildPipeline()
 void AuralisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     pipeline.prepare ({ sampleRate, samplesPerBlock });
+    analyzerIn.prepare (sampleRate, samplesPerBlock);
+    analyzerOut.prepare (sampleRate, samplesPerBlock);
     pushParameters();
     setLatencySamples (limiterProcessor->getLatencySamples());
 }
@@ -99,40 +103,44 @@ bool AuralisAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) 
 
 void AuralisAudioProcessor::pushParameters()
 {
+    // Global intensity (0..1) scales effect depth: 0 = neutral chain, 1 = as set.
+    // Frequencies, times and the limiter (a safety stage) are not scaled.
+    const float i = params.intensity->load();
+
     gainProcessor->setGainDb (params.gain->load());
     gainProcessor->setBypass (params.bypass->load() > 0.5f);
 
-    eqProcessor->setBand (0, params.eqLowFreq->load(), params.eqLowGain->load(), 0.707f);
-    eqProcessor->setBand (1, params.eqBand1Freq->load(), params.eqBand1Gain->load(), params.eqBand1Q->load());
-    eqProcessor->setBand (2, params.eqBand2Freq->load(), params.eqBand2Gain->load(), params.eqBand2Q->load());
-    eqProcessor->setBand (3, params.eqHighFreq->load(), params.eqHighGain->load(), 0.707f);
+    eqProcessor->setBand (0, params.eqLowFreq->load(), params.eqLowGain->load() * i, 0.707f);
+    eqProcessor->setBand (1, params.eqBand1Freq->load(), params.eqBand1Gain->load() * i, params.eqBand1Q->load());
+    eqProcessor->setBand (2, params.eqBand2Freq->load(), params.eqBand2Gain->load() * i, params.eqBand2Q->load());
+    eqProcessor->setBand (3, params.eqHighFreq->load(), params.eqHighGain->load() * i, 0.707f);
 
     bassProcessor->setShelfFreq (params.bassFreq->load());
-    bassProcessor->setShelfGainDb (params.bassGain->load());
-    bassProcessor->setSaturation (params.bassSaturation->load());
+    bassProcessor->setShelfGainDb (params.bassGain->load() * i);
+    bassProcessor->setSaturation (params.bassSaturation->load() * i);
     bassProcessor->setSubHighpassFreq (params.bassSubHp->load());
 
-    clarityProcessor->setAmount (params.clarityAmount->load());
+    clarityProcessor->setAmount (params.clarityAmount->load() * i);
     clarityProcessor->setCenterFreq (params.clarityFreq->load());
-    clarityProcessor->setPresenceDb (params.clarityPresence->load());
+    clarityProcessor->setPresenceDb (params.clarityPresence->load() * i);
 
     compProcessor->setThresholdDb (params.compThreshold->load());
-    compProcessor->setRatio (params.compRatio->load());
+    compProcessor->setRatio (1.0f + (params.compRatio->load() - 1.0f) * i);
     compProcessor->setAttackMs (params.compAttack->load());
     compProcessor->setReleaseMs (params.compRelease->load());
     compProcessor->setKneeDb (params.compKnee->load());
-    compProcessor->setMakeupDb (params.compMakeup->load());
+    compProcessor->setMakeupDb (params.compMakeup->load() * i);
     compProcessor->setRmsMode (params.compRms->load() > 0.5f);
 
-    ambProcessor->setMix (params.ambMix->load());
+    ambProcessor->setMix (params.ambMix->load() * i);
     ambProcessor->setPredelayMs (params.ambPredelay->load());
     ambProcessor->setDecaySeconds (params.ambDecay->load());
     ambProcessor->setDamping (params.ambDamping->load());
     ambProcessor->setWidth (params.ambWidth->load());
 
-    stereoProcessor->setWidth (params.stereoWidth->load());
-    stereoProcessor->setMidGainDb (params.stereoMidGain->load());
-    stereoProcessor->setSideGainDb (params.stereoSideGain->load());
+    stereoProcessor->setWidth (1.0f + (params.stereoWidth->load() - 1.0f) * i);
+    stereoProcessor->setMidGainDb (params.stereoMidGain->load() * i);
+    stereoProcessor->setSideGainDb (params.stereoSideGain->load() * i);
     stereoProcessor->setBalance (params.stereoBalance->load());
 
     limiterProcessor->setThresholdDb (params.limThreshold->load());
@@ -152,18 +160,96 @@ void AuralisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         channels[c] = buffer.getWritePointer (c);
     auralis::AudioBufferView view (channels, numChannels, buffer.getNumSamples());
 
+    analyzerIn.process (view); // read-only pre-chain metering
     pipeline.process (view);
-    analyzer.process (view); // post-chain metering; read-only
+    analyzerOut.process (view); // read-only post-chain metering
 }
 
-juce::AudioProcessorEditor* AuralisAudioProcessor::createEditor() { return nullptr; }
-bool AuralisAudioProcessor::hasEditor() const { return false; }
+// --- Presets / A/B (message thread only) ---
+
+void AuralisAudioProcessor::applyPreset (const auralis::Preset& preset)
+{
+    for (auto& [id, value] : preset.values)
+        if (auto* param = dynamic_cast<juce::RangedAudioParameter*> (apvts.getParameter (id)))
+            param->setValueNotifyingHost (param->convertTo0to1 (value));
+}
+
+void AuralisAudioProcessor::resetToDefaults()
+{
+    for (auto* param : getParameters())
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (param))
+            ranged->setValueNotifyingHost (ranged->getDefaultValue());
+}
+
+bool AuralisAudioProcessor::saveUserPreset (const juce::File& file, const juce::String& name)
+{
+    auralis::Preset preset;
+    preset.name = name;
+    for (auto* param : getParameters())
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (param))
+            preset.values[ranged->getParameterID()] = ranged->convertFrom0to1 (ranged->getValue());
+    return file.replaceWithText (auralis::PresetManager::toJson (preset));
+}
+
+bool AuralisAudioProcessor::loadUserPreset (const juce::File& file)
+{
+    auralis::Preset preset;
+    if (! auralis::PresetManager::fromJson (file.loadFileAsString(), preset))
+        return false;
+    applyPreset (preset);
+    return true;
+}
+
+void AuralisAudioProcessor::snapshotTo (juce::ValueTree& slot)
+{
+    slot = juce::ValueTree ("AbState");
+    for (auto* param : getParameters())
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (param))
+            slot.setProperty (ranged->getParameterID(), ranged->getValue(), nullptr); // normalized 0..1
+}
+
+void AuralisAudioProcessor::restoreFrom (const juce::ValueTree& slot)
+{
+    for (auto* param : getParameters())
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (param))
+            if (auto value = slot.getProperty (ranged->getParameterID()); value.isDouble() || value.isInt())
+                ranged->setValueNotifyingHost ((float) (double) value);
+}
+
+void AuralisAudioProcessor::toggleAb()
+{
+    snapshotTo (abSlots[activeSlot]);
+    activeSlot ^= 1;
+    if (abSlots[activeSlot].getNumProperties() == 0)
+        snapshotTo (abSlots[activeSlot]); // first use: identical copy, no jump
+    else
+        restoreFrom (abSlots[activeSlot]);
+}
+
+juce::String AuralisAudioProcessor::getAbLabel() const
+{
+    return activeSlot == 0 ? "A" : "B";
+}
+
+float AuralisAudioProcessor::getCorrelation() const
+{
+    return stereoProcessor->getCorrelation();
+}
+
+juce::AudioProcessorEditor* AuralisAudioProcessor::createEditor()
+{
+    return new AuralisAudioProcessorEditor (*this);
+}
+bool AuralisAudioProcessor::hasEditor() const { return true; }
 
 const juce::String AuralisAudioProcessor::getName() const { return JucePlugin_Name; }
 bool AuralisAudioProcessor::acceptsMidi() const { return false; }
 bool AuralisAudioProcessor::producesMidi() const { return false; }
 bool AuralisAudioProcessor::isMidiEffect() const { return false; }
-double AuralisAudioProcessor::getTailLengthSeconds() const { return 0.0; }
+double AuralisAudioProcessor::getTailLengthSeconds() const
+{
+    return (double) ambProcessor->getDecaySeconds(); // reverb tail for host buffer sizing
+}
 
 int AuralisAudioProcessor::getNumPrograms() { return 1; }
 int AuralisAudioProcessor::getCurrentProgram() { return 0; }
@@ -173,15 +259,46 @@ void AuralisAudioProcessor::changeProgramName (int, const juce::String&) {}
 
 void AuralisAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    if (auto xml = apvts.copyState().createXml())
-        copyXmlToBinary (*xml, destData);
+    auto xml = apvts.copyState().createXml();
+    if (xml == nullptr)
+        return;
+
+    xml->setAttribute ("schema_version", auralis::PresetManager::schemaVersion);
+
+    // A/B slots travel inside the host state; removed again on load.
+    auto* slots = new juce::XmlElement ("Slots");
+    slots->setAttribute ("active", activeSlot);
+    for (int s = 0; s < 2; ++s)
+        if (auto slotXml = abSlots[s].createXml(); slotXml != nullptr)
+        {
+            slotXml->setAttribute ("index", s);
+            slots->addChildElement (slotXml.release());
+        }
+    xml->addChildElement (slots);
+
+    copyXmlToBinary (*xml, destData);
 }
 
 void AuralisAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    if (auto xml = getXmlFromBinary (data, sizeInBytes))
-        if (xml->hasTagName (apvts.state.getType()))
-            apvts.replaceState (juce::ValueTree::fromXml (*xml));
+    auto xml = getXmlFromBinary (data, sizeInBytes);
+    if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
+        return;
+
+    // Migration hook: older states without schema_version are treated as version 1.
+    const int schema = xml->getIntAttribute ("schema_version", 1);
+    juce::ignoreUnused (schema);
+
+    if (auto* slots = xml->getChildByName ("Slots"))
+    {
+        activeSlot = juce::jlimit (0, 1, slots->getIntAttribute ("active", 0));
+        for (auto* slotXml : slots->getChildIterator())
+            if (auto tree = juce::ValueTree::fromXml (*slotXml); tree.isValid())
+                abSlots[juce::jlimit (0, 1, slotXml->getIntAttribute ("index", 0))] = tree;
+        xml->removeChildElement (slots, true);
+    }
+
+    apvts.replaceState (juce::ValueTree::fromXml (*xml));
 }
 
 juce::AudioProcessorParameter* AuralisAudioProcessor::getBypassParameter() const

@@ -25,6 +25,7 @@ public:
 
     // Correlation of the last processed stereo block, -1..+1 (+1 is mono-compatible).
     float getCorrelation() const noexcept { return correlation.load (std::memory_order_relaxed); }
+    const std::atomic<float>& getCorrelationAtomic() const noexcept { return correlation; }
 
 private:
     Smoother widthSmoother;

@@ -26,6 +26,8 @@ public:
     void setDamping (float damping01) noexcept;    // 0..1 (18 kHz .. 1.8 kHz)
     void setWidth (float width01) noexcept;        // 0..1 (mono .. original)
 
+    float getDecaySeconds() const noexcept { return decaySeconds; } // host tail length
+
 private:
     static constexpr int numLines = 8;
     static constexpr int baseLength[numLines] = { 1543, 2011, 2663, 3413, 4127, 5003, 5741, 6719 };

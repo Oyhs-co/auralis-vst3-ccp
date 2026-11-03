@@ -6,6 +6,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "DspPipeline.h"
+#include "../presets/PresetManager.h"
 #include "gain/GainProcessor.h"
 #include "equalizer/EqualizerProcessor.h"
 #include "bass/BassEnhancerProcessor.h"
@@ -16,6 +17,7 @@
 #include "limiter/LimiterProcessor.h"
 #include "SpectrumAnalyzer.h"
 
+class AuralisAudioProcessorEditor;
 class AuralisAudioProcessor : public juce::AudioProcessor
 {
 public:
@@ -46,12 +48,25 @@ public:
 
     juce::AudioProcessorParameter* getBypassParameter() const override;
 
+    // Presets, A/B and meters (message thread only; called by the editor).
+    void applyPreset (const auralis::Preset& preset);
+    void resetToDefaults();
+    bool saveUserPreset (const juce::File& file, const juce::String& name);
+    bool loadUserPreset (const juce::File& file);
+    void toggleAb();
+    juce::String getAbLabel() const;
+    float getCorrelation() const;
+    const std::atomic<float>& getStereoCorrelationAtomic() const { return stereoProcessor->getCorrelationAtomic(); }
+    auralis::SpectrumAnalyzer& getInputAnalyzer() { return analyzerIn; }
+    auralis::SpectrumAnalyzer& getOutputAnalyzer() { return analyzerOut; }
+
 private:
     // Cached raw parameter pointers: read once per block, never looked up by string in RT.
     struct Params
     {
         std::atomic<float>* gain = nullptr;
         std::atomic<float>* bypass = nullptr;
+        std::atomic<float>* intensity = nullptr;
         std::atomic<float>* eqLowFreq = nullptr;
         std::atomic<float>* eqLowGain = nullptr;
         std::atomic<float>* eqBand1Freq = nullptr;
@@ -93,6 +108,10 @@ private:
     void cacheParams();
     void buildPipeline();
     void pushParameters();
+    void snapshotTo (juce::ValueTree& slot);
+    void restoreFrom (const juce::ValueTree& slot);
+
+    friend class AuralisAudioProcessorEditor;
 
     juce::AudioProcessorValueTreeState apvts;
     Params params;
@@ -106,7 +125,12 @@ private:
     auralis::AmbienceProcessor* ambProcessor = nullptr;
     auralis::StereoEnhancerProcessor* stereoProcessor = nullptr;
     auralis::LimiterProcessor* limiterProcessor = nullptr;
-    auralis::SpectrumAnalyzer analyzer; // post-chain observer, never modifies audio
+    auralis::SpectrumAnalyzer analyzerIn;  // pre-chain observer
+    auralis::SpectrumAnalyzer analyzerOut; // post-chain observer
+
+    // A/B slots: param id -> real value. Saved inside the host state (Slots child).
+    juce::ValueTree abSlots[2] { juce::ValueTree ("AbState"), juce::ValueTree ("AbState") };
+    int activeSlot = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AuralisAudioProcessor)
 };

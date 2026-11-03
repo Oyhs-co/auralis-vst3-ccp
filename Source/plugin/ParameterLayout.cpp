@@ -30,6 +30,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout createAuralisParameterLayout
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "bypass", 1 }, "Bypass", false));
 
+    // Global effect depth: 0 = neutral chain, 1 = as set (scales gains/amounts/width only).
+    addFloat (layout, "intensity", "Intensity", 0.0f, 1.0f, 1.0f);
+
     // Equalizer: low shelf / two peaking bands / high shelf. Shelves have no Q.
     addFloat (layout, "eq_low_freq",  "EQ Low Freq",   20.0f,   500.0f,  100.0f, 0.3f);
     addFloat (layout, "eq_low_gain",  "EQ Low Gain",  -15.0f,    15.0f,    0.0f);
