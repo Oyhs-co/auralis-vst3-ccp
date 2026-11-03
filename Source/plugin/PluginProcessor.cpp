@@ -11,6 +11,8 @@ AuralisAudioProcessor::AuralisAudioProcessor()
 {
     gainParam = apvts.getRawParameterValue ("gain");
     bypassParam = apvts.getRawParameterValue ("bypass");
+
+    gainProcessor = static_cast<auralis::GainProcessor*> (pipeline.addProcessor (std::make_unique<auralis::GainProcessor>()));
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout AuralisAudioProcessor::createParameterLayout()
@@ -34,10 +36,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout AuralisAudioProcessor::creat
 
 void AuralisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    juce::ignoreUnused (samplesPerBlock);
-
-    gainSmoothed.reset (sampleRate, 0.02);
-    gainSmoothed.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (gainParam->load()));
+    pipeline.prepare ({ sampleRate, samplesPerBlock });
+    gainProcessor->setGainDb (gainParam->load());
+    gainProcessor->setBypass (bypassParam->load() > 0.5f);
 }
 
 void AuralisAudioProcessor::releaseResources() {}
@@ -55,21 +56,15 @@ bool AuralisAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) 
 
 void AuralisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
-    if (bypassParam->load() > 0.5f)
-        return; // buffer already holds the input; passthrough
+    gainProcessor->setGainDb (gainParam->load());
+    gainProcessor->setBypass (bypassParam->load() > 0.5f);
 
-    gainSmoothed.setTargetValue (juce::Decibels::decibelsToGain (gainParam->load()));
-
-    const auto numChannels = (juce::uint32) juce::jmin (buffer.getNumChannels(), getTotalNumInputChannels(), getTotalNumOutputChannels());
-    const auto numSamples = (juce::uint32) buffer.getNumSamples();
-
-    for (auto ch = 0u; ch < numChannels; ++ch)
-    {
-        auto* channelData = buffer.getWritePointer ((int) ch);
-
-        for (auto i = 0u; i < numSamples; ++i)
-            channelData[i] *= gainSmoothed.getNextValue();
-    }
+    float* channels[2];
+    const auto numChannels = juce::jmin (buffer.getNumChannels(), getTotalNumOutputChannels());
+    for (int c = 0; c < numChannels; ++c)
+        channels[c] = buffer.getWritePointer (c);
+    auralis::AudioBufferView view (channels, numChannels, buffer.getNumSamples());
+    pipeline.process (view);
 }
 
 juce::AudioProcessorEditor* AuralisAudioProcessor::createEditor() { return nullptr; }

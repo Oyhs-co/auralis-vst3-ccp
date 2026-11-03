@@ -32,7 +32,26 @@ target_compile_definitions(Auralis PUBLIC
     JUCE_VST3_CAN_REPLACE_VST2=0
 )
 
+add_library(auralis_audio_core INTERFACE)
+target_include_directories(auralis_audio_core INTERFACE modules/audio_core)
+
+add_library(auralis_dsp STATIC)
+target_sources(auralis_dsp PRIVATE modules/dsp/gain/GainProcessor.cpp)
+target_include_directories(auralis_dsp PUBLIC modules/dsp)
+target_link_libraries(auralis_dsp PUBLIC auralis_audio_core)
+
+add_library(auralis_dsp_pipeline STATIC)
+target_sources(auralis_dsp_pipeline PRIVATE modules/dsp_pipeline/DspPipeline.cpp)
+target_include_directories(auralis_dsp_pipeline PUBLIC modules/dsp_pipeline)
+target_link_libraries(auralis_dsp_pipeline PUBLIC auralis_dsp)
+
+enable_testing()
+add_executable(auralis_tests tests/unit/TestMain.cpp)
+target_link_libraries(auralis_tests PRIVATE auralis_dsp_pipeline)
+add_test(NAME auralis_unit COMMAND auralis_tests)
+
 target_link_libraries(Auralis PRIVATE
+    auralis_dsp_pipeline
     juce::juce_audio_utils
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags

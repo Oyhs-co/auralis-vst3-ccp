@@ -5,6 +5,9 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include "DspPipeline.h"
+#include "gain/GainProcessor.h"
+
 class AuralisAudioProcessor : public juce::AudioProcessor
 {
 public:
@@ -41,7 +44,8 @@ private:
     juce::AudioProcessorValueTreeState apvts;
     std::atomic<float>* gainParam = nullptr;
     std::atomic<float>* bypassParam = nullptr;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> gainSmoothed;
+    auralis::DspPipeline pipeline;
+    auralis::GainProcessor* gainProcessor = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AuralisAudioProcessor)
 };
