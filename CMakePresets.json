@@ -10,10 +10,20 @@
       "cacheVariables": {
         "CMAKE_CONFIGURATION_TYPES": "Debug;Release"
       }
+    },
+    {
+      "name": "ci",
+      "displayName": "CI (Ninja + MSVC)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-ci",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     }
   ],
   "buildPresets": [
     { "name": "debug", "configurePreset": "msvc", "configuration": "Debug" },
-    { "name": "release", "configurePreset": "msvc", "configuration": "Release" }
+    { "name": "release", "configurePreset": "msvc", "configuration": "Release" },
+    { "name": "ci", "configurePreset": "ci" }
   ]
 }
