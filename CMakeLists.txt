@@ -24,6 +24,7 @@ juce_add_plugin(Auralis
 
 target_sources(Auralis PRIVATE
     Source/plugin/PluginProcessor.cpp
+    Source/plugin/ParameterLayout.cpp
 )
 
 target_compile_definitions(Auralis PUBLIC
@@ -32,26 +33,56 @@ target_compile_definitions(Auralis PUBLIC
     JUCE_VST3_CAN_REPLACE_VST2=0
 )
 
+# --- Auralis internal libraries ---
 add_library(auralis_audio_core INTERFACE)
 target_include_directories(auralis_audio_core INTERFACE modules/audio_core)
 
 add_library(auralis_dsp STATIC)
-target_sources(auralis_dsp PRIVATE modules/dsp/gain/GainProcessor.cpp)
+target_sources(auralis_dsp PRIVATE
+    modules/dsp/gain/GainProcessor.cpp
+    modules/dsp/equalizer/EqualizerProcessor.cpp
+    modules/dsp/bass/BassEnhancerProcessor.cpp
+    modules/dsp/clarity/ClarityProcessor.cpp
+    modules/dsp/dynamics/CompressorProcessor.cpp
+    modules/dsp/ambience/AmbienceProcessor.cpp
+    modules/dsp/stereo/StereoEnhancerProcessor.cpp
+    modules/dsp/limiter/LimiterProcessor.cpp
+)
 target_include_directories(auralis_dsp PUBLIC modules/dsp)
 target_link_libraries(auralis_dsp PUBLIC auralis_audio_core)
+
+add_library(auralis_analysis STATIC)
+target_sources(auralis_analysis PRIVATE
+    modules/analysis/Fft.cpp
+    modules/analysis/SpectrumAnalyzer.cpp
+)
+target_include_directories(auralis_analysis PUBLIC modules/analysis)
+target_link_libraries(auralis_analysis PUBLIC auralis_audio_core)
 
 add_library(auralis_dsp_pipeline STATIC)
 target_sources(auralis_dsp_pipeline PRIVATE modules/dsp_pipeline/DspPipeline.cpp)
 target_include_directories(auralis_dsp_pipeline PUBLIC modules/dsp_pipeline)
-target_link_libraries(auralis_dsp_pipeline PUBLIC auralis_dsp)
+target_link_libraries(auralis_dsp_pipeline PUBLIC auralis_dsp auralis_analysis)
 
 enable_testing()
-add_executable(auralis_tests tests/unit/TestMain.cpp)
-target_link_libraries(auralis_tests PRIVATE auralis_dsp_pipeline)
+add_executable(auralis_tests
+    tests/unit/TestMain.cpp
+    tests/unit/TestEqualizer.cpp
+    tests/unit/TestBass.cpp
+    tests/unit/TestClarity.cpp
+    tests/unit/TestDynamics.cpp
+    tests/unit/TestAmbience.cpp
+    tests/unit/TestStereo.cpp
+    tests/unit/TestLimiter.cpp
+    tests/unit/TestFft.cpp
+    tests/unit/TestAnalyzer.cpp
+)
+target_link_libraries(auralis_tests PRIVATE auralis_dsp_pipeline auralis_analysis)
 add_test(NAME auralis_unit COMMAND auralis_tests)
 
 target_link_libraries(Auralis PRIVATE
     auralis_dsp_pipeline
+    auralis_analysis
     juce::juce_audio_utils
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags

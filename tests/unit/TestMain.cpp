@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Host-side unit tests for the Auralis DSP pipeline (GainProcessor + DspPipeline).
+// Host-side unit tests for the Auralis DSP pipeline and all effect processors.
 
 #include "DspTypes.h"
 #include "IDspProcessor.h"
@@ -12,11 +12,22 @@
 #include <memory>
 #include <vector>
 
+// External test entry points (defined in respective Test*.cpp files)
+int run_EqualizerTests();
+int run_BassTests();
+int run_ClarityTests();
+int run_DynamicsTests();
+int run_AmbienceTests();
+int run_StereoTests();
+int run_LimiterTests();
+int run_FftTests();
+int run_AnalyzerTests();
+
 using auralis::DspPipeline;
 
 static int failures = 0;
 
-#define CHECK(cond) do { if (! (cond)) { ++failures; std::cerr << "CHECK failed: " #cond   \
+#define CHECK(cond) do { if (! (cond)) { ++failures; std::cerr << "CHECK failed: " #cond \
     " at " << __FILE__ << ':' << __LINE__ << '\n'; } } while (false)
 
 namespace
@@ -195,7 +206,7 @@ void monoPipeline()
 
 int main()
 {
-    const struct { const char* name; void (*fn)(); } tests[] = {
+    const struct { const char* name; void (*fn)(); } pipelineTests[] = {
         { "emptyPipelineIsPassthrough", emptyPipelineIsPassthrough },
         { "unityGainIsPassthrough", unityGainIsPassthrough },
         { "gain6dBIncreasesAmplitude", gain6dBIncreasesAmplitude },
@@ -207,12 +218,24 @@ int main()
         { "monoPipeline", monoPipeline },
     };
 
-    for (const auto& t : tests)
+    // Run pipeline tests first
+    for (const auto& t : pipelineTests)
     {
         try { t.fn(); }
         catch (const std::exception& e) { ++failures; std::cerr << "EXCEPTION in " << t.name << ": " << e.what() << '\n'; }
         catch (...) { ++failures; std::cerr << "UNKNOWN EXCEPTION in " << t.name << '\n'; }
     }
+
+    // Run all processor tests (each returns its own failure count)
+    failures += run_EqualizerTests();
+    failures += run_BassTests();
+    failures += run_ClarityTests();
+    failures += run_DynamicsTests();
+    failures += run_AmbienceTests();
+    failures += run_StereoTests();
+    failures += run_LimiterTests();
+    failures += run_FftTests();
+    failures += run_AnalyzerTests();
 
     if (failures == 0)
     {
