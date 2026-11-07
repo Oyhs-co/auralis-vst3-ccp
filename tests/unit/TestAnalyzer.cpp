@@ -73,7 +73,10 @@ static void neverModifiesBuffer()
     ObservedBuffer buf (2, 512);
     buf.fillRamp (-0.4f, 0.005f);
     for (int block = 0; block < 3; ++block)
+    {
         analyzer.process (buf.view());
+        analyzer.analyzePending();
+    }
     buf.checkUnmodified();
 }
 
@@ -118,6 +121,7 @@ static void sineEnergyInRightBand()
     {
         buf.fillSine (1000.0, 0.5, 48000.0, block * 1024);
         analyzer.process (buf.view());
+        analyzer.analyzePending();
     }
 
     int maxBand = 0;
@@ -125,11 +129,18 @@ static void sineEnergyInRightBand()
         if (analyzer.band[b].load() > analyzer.band[maxBand].load())
             maxBand = b;
 
-    CHECK (analyzer.band[maxBand].load() > 0.3f);
+    // 0.5-amplitude sine: peak band ≈ −6 dB → normalized ≈ 0.9 after EMA.
+    CHECK (analyzer.band[maxBand].load() > 0.5f);
+    // Hann first sidelobe (−31.5 dB) leaks ≈ 0.37 normalized into the neighbour
+    // band, so "hot" has to mean > 0.5 to keep exactly one hot band.
     int hotBands = 0;
     for (int b = 0; b < SpectrumAnalyzer::numBands; ++b)
-        if (analyzer.band[b].load() > 0.3f)
+    {
+        if (analyzer.band[b].load() > 0.5f)
             ++hotBands;
+        else if (b != maxBand)
+            CHECK (analyzer.band[b].load() < 0.5f);
+    }
     CHECK (hotBands == 1);
 
     for (int b = 0; b < SpectrumAnalyzer::numBands; ++b)
@@ -144,7 +155,10 @@ static void noNaN()
     ObservedBuffer buf (2, 512);
     buf.fillRamp (0.0f, 0.0f);
     for (int block = 0; block < 4; ++block)
+    {
         analyzer.process (buf.view());
+        analyzer.analyzePending();
+    }
 
     CHECK (analyzer.rmsDb.load() == -100.0f);
     CHECK (analyzer.peakDb.load() == -100.0f);
@@ -160,6 +174,25 @@ static void noNaN()
     }
 }
 
+// analyzePending() must be safe from "no audio yet" state and callable repeatedly.
+static void analyzePendingIsSafeAndRepeatable()
+{
+    // Never prepared, never fed audio: must not crash or publish garbage.
+    SpectrumAnalyzer fresh;
+    fresh.analyzePending();
+    fresh.analyzePending();
+    for (int b = 0; b < SpectrumAnalyzer::numBands; ++b)
+        CHECK (std::isfinite (fresh.band[b].load()));
+
+    // Prepared but silent: repeated calls keep the bands at ~0.
+    SpectrumAnalyzer analyzer;
+    analyzer.prepare (48000.0, 512);
+    analyzer.analyzePending();
+    analyzer.analyzePending();
+    for (int b = 0; b < SpectrumAnalyzer::numBands; ++b)
+        CHECK (std::fabs (analyzer.band[b].load()) < 0.001f);
+}
+
 // run_AnalyzerTests in global namespace
 int run_AnalyzerTests()
 {
@@ -168,5 +201,6 @@ int run_AnalyzerTests()
     peakHoldWorks();
     sineEnergyInRightBand();
     noNaN();
+    analyzePendingIsSafeAndRepeatable();
     return failures;
 }

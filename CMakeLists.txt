@@ -28,6 +28,7 @@ target_sources(Auralis PRIVATE
     Source/plugin/ParameterLayout.cpp
     Source/presets/PresetManager.cpp
     Source/ui/SpectrumView.cpp
+    Source/ui/LevelMeters.cpp
 )
 
 target_compile_definitions(Auralis PUBLIC

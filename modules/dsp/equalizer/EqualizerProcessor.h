@@ -20,6 +20,12 @@ public:
     void setBand (int index, float freqHz, float gainDb, float q) noexcept;
     void setBandEnabled (int index, bool enabled) noexcept;
 
+    // Message-thread magnitude response (dB) of the enabled bands, evaluated at
+    // each requested frequency for the GUI curve. Read-only snapshot: the audio
+    // thread may write the band values concurrently; a torn read costs one
+    // wrong curve frame at worst.
+    void getMagnitudeResponse (const double* freqHz, double* dbOut, int numPoints) const;
+
 private:
     static constexpr int maxBands = 4;
     static constexpr int maxChannels = 2;

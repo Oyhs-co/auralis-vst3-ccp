@@ -55,6 +55,7 @@ public:
     bool loadUserPreset (const juce::File& file);
     void toggleAb();
     juce::String getAbLabel() const;
+    auralis::EqualizerProcessor* getEqualizer() { return eqProcessor; } // curva EQ para la GUI
     const std::atomic<float>& getStereoCorrelationAtomic() const { return stereoProcessor->getCorrelationAtomic(); }
     const std::atomic<float>& getCompressorGrAtomic() const { return compProcessor->getGainReductionAtomic(); }
     const std::atomic<float>& getLimiterGrAtomic() const { return limiterProcessor->getGainReductionAtomic(); }

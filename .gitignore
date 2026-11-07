@@ -8,6 +8,7 @@ out/
 .vscode/
 *.user
 .idea/
+.opencode/
 
 # OS
 Thumbs.db

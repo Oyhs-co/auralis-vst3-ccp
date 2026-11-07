@@ -27,7 +27,8 @@ void SpectrumAnalyzer::prepare (double sampleRate, int /*maxBlockSize*/)
 {
     const int n = fft.size();
     window.resize ((std::size_t) n);
-    ring.resize ((std::size_t) n);
+    rings[0].resize ((std::size_t) n);
+    rings[1].resize ((std::size_t) n);
     re.resize ((std::size_t) n);
     im.resize ((std::size_t) n);
     for (int i = 0; i < n; ++i)
@@ -49,9 +50,12 @@ void SpectrumAnalyzer::prepare (double sampleRate, int /*maxBlockSize*/)
 void SpectrumAnalyzer::reset()
 {
     blockCounter = 0;
-    ringPos = 0;
+    ringPos[0] = 0;
+    ringPos[1] = 0;
     peakHold = 0.0f;
-    std::fill (ring.begin(), ring.end(), 0.0f);
+    publishedRing.store (0, std::memory_order_relaxed);
+    for (auto& r : rings)
+        std::fill (r.begin(), r.end(), 0.0f);
     for (auto& b : band)
         b.store (0.0f, std::memory_order_relaxed);
     rmsDb.store (dbFloor, std::memory_order_relaxed);
@@ -70,7 +74,12 @@ void SpectrumAnalyzer::process (const AudioBufferView& buffer)
     const float* ch0 = buffer.channel (0);
     const float* ch1 = nch > 1 ? buffer.channel (1) : nullptr;
     const int n = fft.size();
-    const bool haveRing = ! ring.empty(); // before prepare() there is no history to fill
+    const bool haveRing = ! rings[0].empty(); // before prepare() there is no history to fill
+    // Always write the ring that is NOT published, so analyzePending() never
+    // sees the writer overwrite what it reads mid-flight.
+    const int w = haveRing ? 1 - publishedRing.load (std::memory_order_relaxed) : 0;
+    float* ring = haveRing ? rings[(std::size_t) w].data() : nullptr;
+    int pos = ringPos[(std::size_t) w];
 
     double sumSquares = 0.0;
     float peak = 0.0f;
@@ -80,42 +89,55 @@ void SpectrumAnalyzer::process (const AudioBufferView& buffer)
         sumSquares += (double) s * (double) s;
         if (s > peak) peak = s;
         else if (-s > peak) peak = -s;
-        if (haveRing)
+        if (ring != nullptr)
         {
-            ring[(std::size_t) ringPos] = s;
-            if (++ringPos == n) ringPos = 0;
+            ring[(std::size_t) pos] = s;
+            if (++pos == n) pos = 0;
         }
     }
+    if (ring != nullptr)
+        ringPos[(std::size_t) w] = pos;
 
     peakHold = std::max (peak, peakHold - holdDecayPerBlock);
     storeDb (rmsDb, (float) std::sqrt (sumSquares / (double) nf));
     storeDb (peakDb, peak);
     storeDb (peakHoldDb, peakHold);
 
-    // FFT on every 2nd block; metering above runs on every block.
-    if ((blockCounter++ & 1) == 0)
-        analyze();
+    // Every 2nd block, publish the ring we just wrote; the FFT itself happens
+    // on the message thread in analyzePending().
+    if (haveRing && (blockCounter++ & 1) == 0)
+        publishedRing.store (w, std::memory_order_release);
 }
 
-void SpectrumAnalyzer::analyze()
+void SpectrumAnalyzer::analyzePending()
 {
     if (re.empty())
-        return; // process() called before prepare()
+        return; // called before prepare()
 
+    // Snapshot the published index once; if the audio thread flips while we
+    // read, the worst case is a torn, 2-blocks-old spectrum — fine for visuals.
+    publishBands (publishedRing.load (std::memory_order_acquire));
+}
+
+void SpectrumAnalyzer::publishBands (int p)
+{
     const int n = fft.size();
+    const auto& ring = rings[(std::size_t) p];
 
     // Window the ring oldest-first so the taper always covers the most recent
     // n samples, whatever the block size.
     for (int i = 0; i < n; ++i)
     {
-        re[(std::size_t) i] = ring[(std::size_t) ((ringPos + i) % n)] * window[(std::size_t) i];
+        re[(std::size_t) i] = ring[(std::size_t) ((ringPos[(std::size_t) p] + i) % n)]
+                              * window[(std::size_t) i];
         im[(std::size_t) i] = 0.0f;
     }
 
     fft.transform (re.data(), im.data());
 
-    // Max magnitude per log band; a full-scale sine peaks at ~1.0 (A*N/4).
-    // EMA across analyses smooths band jitter for the GUI display.
+    // Max magnitude per log band -> dB (a full-scale sine peaks at ~0 dB since
+    // mag * 4/N ≈ 1) -> normalized 0..1 over a 60 dB window. EMA across
+    // analyses smooths band jitter for the GUI display.
     for (int b = 0; b < numBands; ++b)
     {
         float mag = 0.0f;
@@ -124,9 +146,12 @@ void SpectrumAnalyzer::analyze()
             const float m = std::sqrt (re[k] * re[k] + im[k] * im[k]);
             if (m > mag) mag = m;
         }
-        const float value = std::min (1.0f, mag * bandNorm);
+        const float value = mag * bandNorm;
+        // NaN-safe: non-positive (NaN included) lands on the floor.
+        const float db = value > 1e-6f ? 20.0f * std::log10 (value) : -100.0f;
+        const float norm = std::clamp ((db + 60.0f) / 60.0f, 0.0f, 1.0f);
         const float prev = band[b].load (std::memory_order_relaxed);
-        band[b].store (0.7f * value + 0.3f * prev, std::memory_order_relaxed);
+        band[b].store (0.7f * norm + 0.3f * prev, std::memory_order_relaxed);
     }
 }
 }

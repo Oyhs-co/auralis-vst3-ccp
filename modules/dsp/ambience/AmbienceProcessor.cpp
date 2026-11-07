@@ -15,6 +15,7 @@ namespace
     constexpr float mixSilent = 1e-4f;       // below this the output is the exact dry signal
     constexpr float widthSmoothMs = 20.0f;
     constexpr float dampSmoothMs = 50.0f;    // reverb character changes are slow by design
+    constexpr float gainSmoothMs = 100.0f;   // decay gains glide even slower: level steps must stay masked
 }
 
 AmbienceProcessor::AmbienceProcessor() noexcept
@@ -44,6 +45,8 @@ void AmbienceProcessor::prepare (const ProcessContext& ctx)
     predelayPos = 0;
     updatePredelaySamples();
     ap1X = ap1Y = ap2X = ap2Y = 0.0f;
+    gainAlpha = 1.0f - std::exp (-1000.0f / (gainSmoothMs * (float) sampleRate));
+    snapGainsToTargets();
     updateDampCoeffTarget(); // recompute at this sample rate before the snap
     dampSmoother.prepare (sampleRate, dampSmoothMs);
     widthSmoother.prepare (sampleRate, widthSmoothMs); // also snaps: no zipper on reload
@@ -60,10 +63,7 @@ void AmbienceProcessor::process (AudioBufferView& buffer)
     float* ch0 = buffer.channel (0);
     float* ch1 = nch > 1 ? buffer.channel (1) : nullptr;
 
-    // shortcut: decay gains recompute per block (8 pow), level steps are masked by the tail; upgrade: smooth gains per sample or crossfade
-    const float sr = (float) sampleRate;
-    for (int i = 0; i < numLines; ++i)
-        gain[i] = std::pow (10.0f, -3.0f * ((float) lineLength[i] / sr) / decaySeconds);
+    updateGainTargets(); // targets per block (8 pow, unchanged); the applied gains glide per sample below
 
     const int predelayLen = (int) predelay.size();
 
@@ -82,10 +82,12 @@ void AmbienceProcessor::process (AudioBufferView& buffer)
         ap2Y = d;
 
         // Predelay ring: write then read so a 0 ms offset is exactly 0 samples.
-        // shortcut: predelay position is integer-sample and block-quantized, audible only when automating predelay; upgrade: fractional delay interpolation
+        // Fractional read: blend the base sample with the next older one, wrap-safe at ring index 0.
         predelay[predelayPos] = d;
-        d = predelay[predelayPos - predelaySamples
-                     + (predelayPos < predelaySamples ? predelayLen : 0)];
+        const int r0 = predelayPos - predelaySamples
+                       + (predelayPos < predelaySamples ? predelayLen : 0);
+        const int r1 = r0 == 0 ? predelayLen - 1 : r0 - 1;
+        d = predelay[r0] + predelayFrac * (predelay[r1] - predelay[r0]);
         predelayPos = predelayPos + 1 == predelayLen ? 0 : predelayPos + 1;
 
         const float dampCoeff = dampSmoother.next(); // one lerp per sample, shared by all 8 lines
@@ -103,6 +105,7 @@ void AmbienceProcessor::process (AudioBufferView& buffer)
         {
             const float f = s[i] - 0.25f * sum;              // Householder row: H = I - J/4
             dampState[i] += dampCoeff * (f - dampState[i]);  // per-line one-pole damping
+            gain[i] += gainAlpha * (gainTarget[i] - gain[i]); // ~100 ms glide: no level steps when decay is automated
             line[i][linePos[i]] = inputGain * d + gain[i] * dampState[i];
             linePos[i] = linePos[i] + 1 == lineLength[i] ? 0 : linePos[i] + 1;
             if (i < 4)
@@ -151,6 +154,7 @@ void AmbienceProcessor::reset()
     ap1X = ap1Y = ap2X = ap2Y = 0.0f;
     widthSmoother.snap();
     dampSmoother.snap();
+    snapGainsToTargets();
 }
 
 void AmbienceProcessor::setMix (float mix01) noexcept
@@ -180,6 +184,19 @@ void AmbienceProcessor::setWidth (float width01) noexcept
     widthSmoother.setTarget (width01 < 0.0f ? 0.0f : (width01 > 1.0f ? 1.0f : width01));
 }
 
+void AmbienceProcessor::updateGainTargets() noexcept
+{
+    const float sr = (float) sampleRate;
+    for (int i = 0; i < numLines; ++i)
+        gainTarget[i] = std::pow (10.0f, -3.0f * ((float) lineLength[i] / sr) / decaySeconds);
+}
+
+void AmbienceProcessor::snapGainsToTargets() noexcept
+{
+    updateGainTargets();
+    std::copy (gainTarget, gainTarget + numLines, gain);
+}
+
 void AmbienceProcessor::updateDampCoeffTarget() noexcept
 {
     // fc = 18 kHz..1.8 kHz over damping 0..1, as the one-pole feedback coefficient.
@@ -192,10 +209,19 @@ void AmbienceProcessor::updatePredelaySamples() noexcept
     if (predelay.empty())
     {
         predelaySamples = 0;
+        predelayFrac = 0.0f;
         return;
     }
+    const float samples = predelayMs * 0.001f * (float) sampleRate;
+    const int whole = (int) samples; // ms is clamped >= 0, so truncation is floor
     const int maxPredelay = (int) predelay.size() - 1;
-    const int samples = (int) std::lround (predelayMs * 0.001f * (float) sampleRate);
-    predelaySamples = samples < 0 ? 0 : (samples > maxPredelay ? maxPredelay : samples);
+    if (whole >= maxPredelay)
+    {
+        predelaySamples = maxPredelay; // at the ring limit there is no older neighbour to blend with
+        predelayFrac = 0.0f;
+        return;
+    }
+    predelaySamples = whole;
+    predelayFrac = samples - (float) whole;
 }
 }

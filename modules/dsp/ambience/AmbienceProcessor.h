@@ -35,17 +35,22 @@ private:
     static constexpr int baseLength[numLines] = { 1543, 2011, 2663, 3413, 4127, 5003, 5741, 6719 };
 
     void updatePredelaySamples() noexcept;
+    void updateGainTargets() noexcept;
+    void snapGainsToTargets() noexcept; // prepare/reset: gains start at target, no glide on (re)load
     void updateDampCoeffTarget() noexcept;
 
     std::vector<float> line[numLines];
     int lineLength[numLines] = {};
     int linePos[numLines] = {};
     float dampState[numLines] = {};
-    float gain[numLines] = {}; // per-block, derived from decay
+    float gain[numLines] = {};       // applied, glides per sample toward gainTarget
+    float gainTarget[numLines] = {}; // per-block t60 target, derived from decay
+    float gainAlpha = 1.0f;          // one-pole glide coefficient, computed in prepare
 
     std::vector<float> predelay;
     int predelayPos = 0;
     int predelaySamples = 0;
+    float predelayFrac = 0.0f; // fractional part of the delay in samples (0..1)
 
     float ap1X = 0.0f; float ap1Y = 0.0f; // diffuser allpass states (1 sample each)
     float ap2X = 0.0f; float ap2Y = 0.0f;

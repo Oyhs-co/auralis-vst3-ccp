@@ -12,16 +12,14 @@ Select-String -Path Source,modules,tests,tools -Pattern '// shortcut:' -Recurse
 
 ---
 
-## 1. Shortcuts vigentes (4)
+## 1. Shortcuts vigentes (2)
 
 | ID | Ubicación | Recorte | Cuándo duele | Upgrade |
 |---|---|---|---|---|
 | S-06 | `modules/dsp/clarity/ClarityProcessor.cpp:32` y `modules/dsp/limiter/LimiterProcessor.cpp:40` | Canales por encima del `numChannels` preparado pasan secos | Si el host entregara más canales que los preparados en `prepareToPlay` | Re-preparar al cambio de layout (los buses hoy son solo mono/estéreo) |
-| S-07 | `modules/dsp/ambience/AmbienceProcessor.cpp:85` | Posición de predelay cuantizada a muestras enteras y aplicada por bloque | Automatizando `amb_predelay` | Interpolación de retardo fraccional |
-| S-08 | `modules/dsp/ambience/AmbienceProcessor.cpp:63` | Ganancias de decay recalculadas por bloque (8 `pow`) — los escalones quedan enmascarados por la cola | Automatización muy rápida de `amb_decay` | Suavizar ganancias por muestra o crossfade |
 | — | `modules/dsp/limiter/LimiterProcessor.cpp:70` | El ceiling es un clamp duro (por diseño, documentado en el header) | Solo con señal sobre el techo | Es la garantía de seguridad; no se cambia |
 
-Los tres primeros tienen su `// shortcut:` en el código con condición de upgrade observable, conforme a `AGENTS.md` §4.
+El único shortcut con ID tiene su `// shortcut:` en el código con condición de upgrade observable, conforme a `AGENTS.md` §4.
 
 ---
 
@@ -39,9 +37,11 @@ Historial de lo que este registro documentaba y cómo se resolvió. Referencia: 
 | U-01 | Bypass solo apagaba el master gain | **Resuelto**: bypass real — `pushNeutralParameters()` alimenta la cadena con valores neutros (passthrough exacto verificado), sin clics (suavizados internos) y con la latencia preservada (el ring del limiter sigue avanzando). Excepción documentada: picos > 0 dBFS tocan el clamp del limiter |
 | U-02 | EQ recalculaba coeficientes cada bloque | **Resuelto** junto con S-03: `setBand` compara valores antes de marcar dirty; `updateBand` corre en el prólogo del bloque |
 | U-03 | Activación individual sin exponer | **Resuelto**: 10 parámetros bool nuevos (IDs estables, solo añadidos): `eq_en`, `eq_low_en`, `eq_band1_en`, `eq_band2_en`, `eq_high_en`, `bass_en`, `clarity_en`, `comp_en`, `amb_en`, `stereo_en`. El limiter no es conmutable (latencia). La GUI los dibuja automáticamente |
-| U-04 | Gain reduction no visible | **Resuelto**: atómicos de GR del compresor y limiter expuestos (`getGainReductionAtomic`) y mostrados en `SpectrumView` ("GR c / GR l") |
-| U-05 | Analizador: FFT fija sin historial ni promediado | **Resuelto parcial**: ring buffer de 1024 (siempre analiza las últimas muestras, cualquier tamaño de bloque) + promediado exponencial por banda (0.7/0.3). Overlap de ventana queda fuera (monitorización visual, no medición) |
-| U-06 | Parámetros audibles sin suavizar | **Resuelto**: `stereo_balance` (20 ms), `comp_ratio` y `comp_knee` (20 ms, ratio clampeado ≥ 1), `amb_damping` (50 ms, coeficiente), `amb_width` (20 ms). Quedan S-07/S-08 para predelay/decay (cuantización inherente, documentada) |
+| U-04 | Gain reduction no visible | **Resuelto**: atómicos de GR del compresor y limiter expuestos (`getGainReductionAtomic`) y mostrados como barras dedicadas en `LevelMeters` ("GR c / GR l") |
+| U-05 | Analizador: FFT fija sin historial ni promediado | **Resuelto**: ring buffer doble (siempre analiza las últimas 1024 muestras, cualquier tamaño de bloque) + promediado exponencial por banda + publicación en dB normalizado + **FFT movida fuera del hilo de audio** (`analyzePending()` en el timer de la GUI; el hilo de audio solo acumula y publica el ring). Overlap de ventana queda fuera (monitorización visual, no medición) |
+| U-06 | Parámetros audibles sin suavizar | **Resuelto**: `stereo_balance` (20 ms), `comp_ratio` y `comp_knee` (20 ms, ratio clampeado ≥ 1), `amb_damping` (50 ms, coeficiente), `amb_width` (20 ms) |
+| S-07 | Predelay cuantizado a muestras enteras por bloque | **Resuelto**: lectura fraccional con interpolación lineal entre dos posiciones del ring (wrap-safe); test `TestAmbience::predelayAutomationIsContinuous` |
+| S-08 | Ganancias de decay recalculadas por bloque (8 pow, escalones) | **Resuelto**: objetivos por bloque + glide por muestra (8 lerps, ~100 ms); test `TestAmbience::decayAutomationIsContinuous` |
 | U-07 | Sin tests de presets/estado | **Resuelto**: `TestPresets.cpp` (round-trip JSON, rechazo de schema desconocido, presets de fábrica bien formos con allow-list de 49 IDs) + la cadena completa cubierta por `TestResilience` y pluginval (estado, restauración, editor) |
 | U-08 | Warning flags solo en el plugin | **Resuelto**: `juce_recommended_warning_flags` enlazado a `auralis_dsp`, `auralis_analysis`, `auralis_dsp_pipeline` y (por propagación) `auralis_tests`; los avisos destapados se corrigieron |
 | U-09 | Estructura incompleta para release | **Resuelto lo exigible**: `docs/LICENSE` (CC BY-SA 4.0), plantillas de issue y PR, set documental completo (DSP-ALGORITHMS, PARAMETERS, INTERFACES, RUNTIME-FLOWS, BUILD-TEST-RELEASE, TROUBLESHOOTING, USER-GUIDE). `domain/parameters/state` siguen integrados en el adaptador a propósito (un solo target; decisión documentada en ARCHITECTURE). Tag `v0.2.0` al publicar |
@@ -73,7 +73,7 @@ Historial de lo que este registro documentaba y cómo se resolvió. Referencia: 
 
 Bloquea el release si: incumple un criterio de aceptación entregado, hace que la salida no corresponda al contrato del host (bypass, latencia), compromete la seguridad de tiempo real (asignación, lock, E/S en la ruta de audio — nunca se negocia), o implica pérdida de estado/presets.
 
-Ninguno de los 4 vigentes bloquea: S-06 solo es alcanzable con layouts multicanal (fuera de alcance declarado), S-07/S-08 son inaudibles salvo automatización extrema y están declarados como limitaciones conocidas.
+Ninguno de los vigentes bloquea: S-06 solo es alcanzable con layouts multicanal (fuera de alcance declarado) y el clamp de ceiling es la garantía de seguridad del limiter.
 
 ---
 

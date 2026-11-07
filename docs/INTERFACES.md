@@ -347,7 +347,7 @@ Responsabilidad única: reverb de 8 líneas de retardo con realimentación House
 
 ```cpp
 void setMix (float mix01) noexcept;            // 0..1, suavizado 30 ms
-void setPredelayMs (float ms) noexcept;        // 0..200 ms
+void setPredelayMs (float ms) noexcept;        // 0..200 ms, lectura fraccional interpolada
 void setDecaySeconds (float seconds) noexcept; // 0.1..10 (t60)
 void setDamping (float damping01) noexcept;    // 0..1 -> fc 18 kHz..1.8 kHz
 void setWidth (float width01) noexcept;        // 0..1 (0 = mono)
@@ -356,8 +356,8 @@ float getDecaySeconds() const noexcept;        // tail para el host
 static constexpr int numLines = 8;
 static constexpr int baseLength[8] = { 1543, 2011, 2663, 3413, 4127, 5003, 5741, 6719 };
 std::vector<float> line[8];  int lineLength[8], linePos[8];
-float dampState[8], gain[8]; // gain derivado de decay por bloque
-std::vector<float> predelay; int predelayPos, predelaySamples;
+float dampState[8], gain[8], gainTarget[8]; // gain aplica con glide ~100 ms hacia gainTarget (objetivo t60 por bloque)
+std::vector<float> predelay; int predelayPos, predelaySamples; float predelayFrac; // parte fraccional del retardo
 float ap1X, ap1Y, ap2X, ap2Y; // difusores allpass de 1 muestra
 Smoother mixSmoother;
 float decaySeconds, damping, width, predelayMs;
@@ -365,8 +365,8 @@ double sampleRate;
 ```
 
 - Invariantes: `prepare` es el único punto de asignación (líneas escaladas por `sr/48000`, longitudes impares ≥ 2; predelay de 200 ms + 1); `process` sin preparar es passthrough; con `mix < 1e-4` la salida es dry exacto pero la red sigue corriendo para mantener la cola cálida; en mono el wet se pliega a mid y width cancela.
-- RT: recomputa por bloque los 8 `pow` de ganancia t60 + `exp` del damping; por muestra actualiza la red (`H = I - J/4`) y el suavizador de mix. Estado de todos los retardos en `std::vector` preparado.
-- Tests: `TestAmbience.cpp` (`zeroMixIsExactPassthrough`, `wetTailExistsAndDecays`, `decaySecondsControlsTail`, `dampingDarkens`, `predelayOffsetsWet`, `stabilityNoNaN`).
+- RT: recomputa por bloque los objetivos de ganancia t60 (8 `pow`) + `exp` del damping; por muestra actualiza la red (`H = I - J/4`), interpola la lectura fraccional del predelay con la muestra anterior (wrap-safe), desliza las 8 ganancias hacia su objetivo (~100 ms, un lerp por línea) y avanza los suavizadores de damping/width/mix. Estado de todos los retardos en `std::vector` preparado.
+- Tests: `TestAmbience.cpp` (`zeroMixIsExactPassthrough`, `wetTailExistsAndDecays`, `decaySecondsControlsTail`, `dampingDarkens`, `predelayOffsetsWet`, `stabilityNoNaN`, `widthAndDampingAutomationIsContinuous`, `predelayAutomationIsContinuous`, `decayAutomationIsContinuous`).
 
 ### 4.7 `StereoEnhancerProcessor` — imagen estéreo
 

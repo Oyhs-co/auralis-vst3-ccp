@@ -17,6 +17,8 @@ static int failures = 0;
 
 using auralis::AmbienceProcessor;
 
+static constexpr float twoPi = 6.283185307179586f;
+
 struct TestBuffer
 {
     TestBuffer (int channels, int frames)
@@ -280,6 +282,65 @@ static void widthAndDampingAutomationIsContinuous()
     }
 }
 
+static void predelayAutomationIsContinuous()
+{
+    AmbienceProcessor a;
+    a.prepare ({ 48000.0, 512 });
+    a.setMix (1.0f);
+    a.setDecaySeconds (2.0f);
+    TestBuffer buf (2, 512);
+    float prev[2] = { 0.0f, 0.0f };
+    bool hasPrev = false;
+    for (int block = 0; block <= 12; ++block)
+    {
+        a.setPredelayMs (5.0f * float (block)); // 0 -> 60 ms in 12 steps of 5 ms
+        for (int c = 0; c < buf.numChannels; ++c)
+            for (int i = 0; i < buf.numFrames; ++i)
+                buf.sample (c, i) = 0.3f * std::sin (twoPi * 200.0f * float (block * 512 + i) / 48000.0f);
+        auto view = buf.view();
+        a.process (view);
+        for (int c = 0; c < buf.numChannels; ++c)
+            for (int i = 0; i < buf.numFrames; ++i)
+            {
+                const float s = buf.sample (c, i);
+                CHECK (std::isfinite (s));
+                if (hasPrev)
+                    CHECK (std::fabs (s - prev[c]) < 0.05f); // fractional read must not ratchet
+                prev[c] = s;
+            }
+        hasPrev = true;
+    }
+}
+
+static void decayAutomationIsContinuous()
+{
+    AmbienceProcessor a;
+    a.prepare ({ 48000.0, 512 });
+    a.setMix (1.0f);
+    TestBuffer buf (2, 512);
+    float prev[2] = { 0.0f, 0.0f };
+    bool hasPrev = false;
+    for (int block = 0; block <= 12; ++block)
+    {
+        a.setDecaySeconds (0.3f + 2.7f * float (block) / 12.0f); // 0.3 -> 3 s in 12 steps
+        for (int c = 0; c < buf.numChannels; ++c)
+            for (int i = 0; i < buf.numFrames; ++i)
+                buf.sample (c, i) = 0.1f; // constant quiet input: no impulse transient
+        auto view = buf.view();
+        a.process (view);
+        for (int c = 0; c < buf.numChannels; ++c)
+            for (int i = 0; i < buf.numFrames; ++i)
+            {
+                const float s = buf.sample (c, i);
+                CHECK (std::isfinite (s));
+                if (hasPrev)
+                    CHECK (std::fabs (s - prev[c]) < 0.05f); // gains glide, no level steps
+                prev[c] = s;
+            }
+        hasPrev = true;
+    }
+}
+
 // run_AmbienceTests in global namespace
 int run_AmbienceTests()
 {
@@ -290,5 +351,7 @@ int run_AmbienceTests()
     predelayOffsetsWet();
     stabilityNoNaN();
     widthAndDampingAutomationIsContinuous();
+    predelayAutomationIsContinuous();
+    decayAutomationIsContinuous();
     return failures;
 }

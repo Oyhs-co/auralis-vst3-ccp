@@ -10,16 +10,19 @@
 namespace auralis
 {
 // Read-only audio observer: meters the mono sum and keeps a log-band spectrum
-// snapshot in plain atomics. Never writes samples, never locks, never allocates
-// in process(). The GUI pulls the snapshot from any thread.
+// snapshot in plain atomics. process() (audio thread) only appends to a
+// double-buffered ring and flips an index; analyzePending() (message thread)
+// runs the window/FFT/band mapping and publishes normalized dB bands. Never
+// writes samples, never locks, never allocates after prepare().
 class SpectrumAnalyzer
 {
 public:
     static constexpr int numBands = 32;
 
     void prepare (double sampleRate, int maxBlockSize);
-    void process (const AudioBufferView& buffer); // observes only
+    void process (const AudioBufferView& buffer); // audio thread: meters + ring append only
     void reset();
+    void analyzePending(); // message thread: Hann window + FFT + band publication
 
     // Relaxed-ordering snapshot, safe to read while audio runs.
     std::atomic<float> band[numBands] {};
@@ -28,16 +31,17 @@ public:
     std::atomic<float> peakHoldDb { -100.0f };
 
 private:
-    void analyze();
+    void publishBands (int ringIndex);
 
     Fft fft { 1024 };
     std::vector<float> window;      // Hann, fft.size() samples
-    std::vector<float> ring;        // mono-sum history, fft.size() most recent samples
-    std::vector<float> re, im;      // FFT scratch, fft.size() samples
+    std::vector<float> rings[2];    // mono-sum history, double-buffered
+    std::atomic<int> publishedRing { 0 };
+    std::vector<float> re, im;      // FFT scratch, message thread only
     int bandEdges[numBands + 1] {}; // FFT bin index of each log edge, 20 Hz..20 kHz
+    int ringPos[2] { 0, 0 };        // next write index per ring (oldest sample)
     float bandNorm = 1.0f;          // 1 / (fft.size() / 4)
     int blockCounter = 0;
-    int ringPos = 0;                // next write index into ring (oldest sample)
     float peakHold = 0.0f;
 };
 }

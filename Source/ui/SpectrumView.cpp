@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+﻿// SPDX-License-Identifier: AGPL-3.0-only
 
 #include "SpectrumView.h"
 
@@ -8,72 +8,149 @@ namespace auralis
 {
 namespace
 {
-// dB to 0..1 panel height, -60 dB floor.
-float dbToHeight (float db)
-{
-    return juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
-}
+// Studio-dark palette.
+const juce::Colour bgColour    { 0xff0d1117 };
+const juce::Colour gridColour  { 0xff30363d };
+const juce::Colour textColour  { 0xffc9d1d9 };
+const juce::Colour mutedColour { 0xff8b949e };
+const juce::Colour tealColour  { 0xff2dd4bf };
+const juce::Colour amberColour { 0xffd29922 };
+const juce::Colour inputColour { 0xff58a6ff };
+
+constexpr int eqCurvePoints = 64;
 } // namespace
 
 SpectrumView::SpectrumView (SpectrumAnalyzer& inputAnalyzer, SpectrumAnalyzer& outputAnalyzer,
                             const std::atomic<float>& correlationRef,
-                            const std::atomic<float>& compressorGrDb, const std::atomic<float>& limiterGrDb)
+                            const std::atomic<float>& /*compressorGrDb*/,
+                            const std::atomic<float>& /*limiterGrDb*/,
+                            const auralis::EqualizerProcessor* eqProcessor)
     : analyzerIn (inputAnalyzer), analyzerOut (outputAnalyzer), correlation (correlationRef),
-      compressorGr (compressorGrDb), limiterGr (limiterGrDb)
+      eq (eqProcessor)
 {
+    // Gain reduction lives in LevelMeters; the refs stay in the signature so the
+    // editor wiring is stable.
     setOpaque (true);
+}
+
+void SpectrumView::setEqCurveVisible (bool show)
+{
+    eqCurveVisible = show;
 }
 
 void SpectrumView::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour (0xff14181d));
+    g.fillAll (bgColour);
 
-    auto area = getLocalBounds().toFloat().reduced (6.0f);
-    const int numBands = SpectrumAnalyzer::numBands;
-    const float bandWidth = area.getWidth() / (float) numBands;
-    const float meterTop = area.getBottom() - 18.0f;
-    auto spectrumArea = area.withBottom (meterTop);
+    // Top strip for the correlation readout, bottom strip for frequency labels.
+    auto topStrip = getLocalBounds().toFloat().removeFromTop (16.0f);
+    auto labelStrip = getLocalBounds().toFloat().removeFromBottom (14.0f);
+    auto area = getLocalBounds().toFloat().withTrimmedTop (16.0f).withTrimmedBottom (14.0f);
+    const float height = area.getHeight();
+    const float bottom = area.getBottom();
+    const float log20 = std::log10 (20.0f);
+    const float logSpan = 4.0f - log20; // 20 Hz..20 kHz
 
-    for (int b = 0; b < numBands; ++b)
+    auto bandX = [&] (int b) -> float
     {
-        const float x = spectrumArea.getX() + bandWidth * (float) b;
-        const float w = bandWidth - 2.0f;
+        const float f = 20.0f * std::pow (1000.0f, (float) b / (float) SpectrumAnalyzer::numBands);
+        return area.getX() + (std::log10 (f) - log20) / logSpan * area.getWidth();
+    };
+    auto yForNorm = [&] (float norm) -> float
+    {
+        return bottom - juce::jlimit (0.0f, 1.0f, norm) * height;
+    };
 
-        const float in = juce::jlimit (0.0f, 1.0f, analyzerIn.band[b].load (std::memory_order_relaxed));
-        const float out = juce::jlimit (0.0f, 1.0f, analyzerOut.band[b].load (std::memory_order_relaxed));
-
-        g.setColour (bandColourIn);
-        g.fillRect (x, spectrumArea.getBottom() - in * spectrumArea.getHeight(), w, in * spectrumArea.getHeight());
-        g.setColour (bandColourOut);
-        g.fillRect (x + w * 0.25f, spectrumArea.getBottom() - out * spectrumArea.getHeight(),
-                    w * 0.75f, out * spectrumArea.getHeight());
+    // Horizontal grid: 0/-12/-24/-36/-48 dB, labels on the right.
+    g.setFont (11.0f);
+    for (int db = 0; db >= -48; db -= 12)
+    {
+        const float y = yForNorm ((float) (db + 60) / 60.0f);
+        g.setColour (gridColour);
+        g.drawHorizontalLine ((int) y, area.getX(), area.getRight());
+        g.setColour (mutedColour);
+        g.drawText (juce::String (db),
+                    juce::Rectangle<float> (area.getRight() - 34.0f, y + 1.0f, 32.0f, 12.0f),
+                    juce::Justification::centredRight);
     }
 
-    // Peak hold trace over the output bands.
-    g.setColour (peakColour);
-    const float hold = dbToHeight (analyzerOut.peakHoldDb.load (std::memory_order_relaxed));
-    if (hold > 0.0f)
-        g.fillRect (spectrumArea.getX(), spectrumArea.getBottom() - hold * spectrumArea.getHeight(),
-                    spectrumArea.getWidth(), 1.5f);
+    // Vertical grid: 100 Hz / 1 kHz / 10 kHz.
+    for (int hz : { 100, 1000, 10000 })
+    {
+        const float x = area.getX() + (std::log10 ((float) hz) - log20) / logSpan * area.getWidth();
+        g.setColour (gridColour);
+        g.drawVerticalLine ((int) x, area.getY(), bottom);
+        g.setColour (mutedColour);
+        auto label = hz >= 1000 ? juce::String (hz / 1000) + " kHz" : juce::String (hz) + " Hz";
+        g.drawText (label,
+                    juce::Rectangle<float> (x - 30.0f, labelStrip.getY(), 60.0f, labelStrip.getHeight()),
+                    juce::Justification::centred);
+    }
 
-    // Metering line: in/out RMS, correlation and gain reduction.
-    const float inRms = analyzerIn.rmsDb.load (std::memory_order_relaxed);
-    const float outRms = analyzerOut.rmsDb.load (std::memory_order_relaxed);
+    // Input (blue) under output (teal): filled path + thin line, bands are
+    // log-spaced 20 Hz..20 kHz and already normalized over a 60 dB window.
+    auto drawSpectrum = [&] (const SpectrumAnalyzer& a, juce::Colour fill, juce::Colour line, float lineWidth)
+    {
+        juce::Path p;
+        p.startNewSubPath (bandX (0), yForNorm (a.band[0].load (std::memory_order_relaxed)));
+        for (int b = 1; b < SpectrumAnalyzer::numBands; ++b)
+            p.lineTo (bandX (b), yForNorm (a.band[b].load (std::memory_order_relaxed)));
+
+        juce::Path fillPath (p);
+        fillPath.lineTo (bandX (SpectrumAnalyzer::numBands - 1), bottom);
+        fillPath.lineTo (bandX (0), bottom);
+        fillPath.closeSubPath();
+
+        g.setColour (fill);
+        g.fillPath (fillPath);
+        g.setColour (line);
+        g.strokePath (p, juce::PathStrokeType (lineWidth));
+    };
+    drawSpectrum (analyzerIn, juce::Colour (0x5958a6ff), inputColour, 1.0f);
+    drawSpectrum (analyzerOut, juce::Colour (0x4d2dd4bf), tealColour, 1.5f);
+
+    // Output peak hold, amber horizontal trace.
+    const float holdNorm = (analyzerOut.peakHoldDb.load (std::memory_order_relaxed) + 60.0f) / 60.0f;
+    if (holdNorm > 0.0f)
+    {
+        g.setColour (amberColour);
+        g.drawHorizontalLine ((int) yForNorm (holdNorm), area.getX(), area.getRight());
+    }
+
+    // EQ curve: same 60 dB pixel range but ±15 dB mapped over it (x2) so a
+    // ±15 dB EQ reads clearly.
+    if (eqCurveVisible && eq != nullptr)
+    {
+        double freqs[eqCurvePoints];
+        double dbs[eqCurvePoints];
+        for (int i = 0; i < eqCurvePoints; ++i)
+            freqs[i] = 20.0 * std::pow (1000.0, (double) i / (double) (eqCurvePoints - 1));
+        eq->getMagnitudeResponse (freqs, dbs, eqCurvePoints);
+
+        juce::Path eqPath;
+        for (int i = 0; i < eqCurvePoints; ++i)
+        {
+            const float x = area.getX()
+                + (float) ((std::log10 (freqs[i]) - (double) log20) / (double) logSpan) * area.getWidth();
+            const float y = yForNorm ((float) ((dbs[i] + 15.0) / 30.0));
+            i == 0 ? eqPath.startNewSubPath (x, y) : eqPath.lineTo (x, y);
+        }
+
+        juce::Path eqFill (eqPath);
+        eqFill.lineTo (area.getRight(), bottom);
+        eqFill.lineTo (area.getX(), bottom);
+        eqFill.closeSubPath();
+        g.setColour (juce::Colour (0x18c9d1d9));
+        g.fillPath (eqFill);
+        g.setColour (textColour);
+        g.strokePath (eqPath, juce::PathStrokeType (2.0f));
+    }
+
+    // Stereo correlation readout, top-right.
     const float corr = juce::jlimit (-1.0f, 1.0f, correlation.load (std::memory_order_relaxed));
-    const float compGr = compressorGr.load (std::memory_order_relaxed);
-    const float limGr = limiterGr.load (std::memory_order_relaxed);
-
-    g.setColour (juce::Colours::grey);
-    g.setFont (13.0f);
-    auto meterLine = area.withTop (meterTop);
-    g.drawText (juce::String::formatted ("In %.1f dB", inRms), meterLine.removeFromLeft (area.getWidth() / 5.0f),
-                juce::Justification::centredLeft);
-    g.drawText (juce::String::formatted ("Out %.1f dB", outRms), meterLine.removeFromLeft (area.getWidth() / 5.0f),
-                juce::Justification::centredLeft);
-    g.drawText (juce::String::formatted ("Corr %+.2f", corr), meterLine.removeFromLeft (area.getWidth() / 5.0f),
-                juce::Justification::centredLeft);
-    g.drawText (juce::String::formatted ("GR c %.1f", compGr), meterLine.removeFromLeft (area.getWidth() / 5.0f),
-                juce::Justification::centredLeft);
-    g.drawText (juce::String::formatted ("GR l %.1f", limGr), meterLine, juce::Justification::centredLeft);
+    g.setColour (mutedColour);
+    g.setFont (12.0f);
+    g.drawText (juce::String::formatted ("Corr %+.2f", corr), topStrip.removeFromRight (90.0f).reduced (6.0f, 0.0f),
+                juce::Justification::centredRight);
 }
 } // namespace auralis
