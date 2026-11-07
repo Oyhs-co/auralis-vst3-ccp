@@ -33,6 +33,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout createAuralisParameterLayout
     // Global effect depth: 0 = neutral chain, 1 = as set (scales gains/amounts/width only).
     addFloat (layout, "intensity", "Intensity", 0.0f, 1.0f, 1.0f);
 
+    // Individual activation (plan 5.3/5.13). IDs are stable API — append only.
+    // The limiter is intentionally not switchable: disabling it would change the reported latency.
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "eq_en", 1 }, "EQ On", true));
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "eq_low_en", 1 }, "EQ Low On", true));
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "eq_band1_en", 1 }, "EQ Band1 On", true));
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "eq_band2_en", 1 }, "EQ Band2 On", true));
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "eq_high_en", 1 }, "EQ High On", true));
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "bass_en", 1 }, "Bass On", true));
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "clarity_en", 1 }, "Clarity On", true));
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "comp_en", 1 }, "Comp On", true));
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "amb_en", 1 }, "Ambience On", true));
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "stereo_en", 1 }, "Stereo On", true));
+
     // Equalizer: low shelf / two peaking bands / high shelf. Shelves have no Q.
     addFloat (layout, "eq_low_freq",  "EQ Low Freq",   20.0f,   500.0f,  100.0f, 0.3f);
     addFloat (layout, "eq_low_gain",  "EQ Low Gain",  -15.0f,    15.0f,    0.0f);

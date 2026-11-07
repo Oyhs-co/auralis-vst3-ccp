@@ -16,9 +16,16 @@ void LimiterProcessor::prepare (const ProcessContext& ctx)
 {
     sampleRate = (float) ctx.sampleRate;
     latency = (int) std::lround (0.005 * ctx.sampleRate); // 5 ms lookahead
-    for (auto& ring : delay)
-        ring.assign (std::size_t (latency), 0.0f);
+    delay.assign (std::size_t (ctx.numChannels),
+                  std::vector<float> (std::size_t (latency), 0.0f));
+    window.assign (std::size_t (ctx.numChannels), SlidingMax {});
+    for (auto& w : window)
+    {
+        w.val.assign (std::size_t (latency) + 1, 0.0f);
+        w.idx.assign (std::size_t (latency) + 1, 0);
+    }
     writePos = 0;
+    seq = 0;
     gain = 1.0f;
     thresholdSmoother.prepare (ctx.sampleRate, 5.0f);
     thresholdSmoother.snap();
@@ -30,27 +37,42 @@ void LimiterProcessor::process (AudioBufferView& buffer)
     if (L <= 0)
         return; // not prepared yet
 
-    // shortcut: at most 2 channels (mono/stereo per plan); extras pass through untouched
-    const int nch = std::min (buffer.numChannels(), kMaxChannels);
+    // shortcut: channels beyond prepare()'s numChannels pass dry, upgrade: re-prepare on layout change
+    const int prepared = (int) window.size();
+    const int nch = buffer.numChannels() < prepared ? buffer.numChannels() : prepared;
     const int nf = buffer.numFrames();
     // setReleaseMs is plain, so the coefficient is refreshed once per block.
     const float releaseCoeff = 1.0f - std::exp (-1000.0f / (releaseMs * sampleRate));
+    const int cap = L + 1; // window = last L inputs plus the current one
     float minGain = 1.0f;
 
     for (int i = 0; i < nf; ++i)
     {
-        // shortcut: O(N*L) window peak scan, upgrade to a monotonic deque if profiling shows cost
-        // Window = input samples [i-L, i]: the ring holds the last L inputs (the
-        // head now being output included) and the incoming sample joins it. A
-        // peak therefore holds the gain down from its arrival until it has left
-        // the delay line, so instant attack can never under-limit its own output.
+        // Window = input samples [seq-L, seq] per channel: the ring holds the
+        // last L inputs (the head now being output included) and the incoming
+        // sample joins it. A peak therefore holds the gain down from its
+        // arrival until it has left the delay line, so instant attack can
+        // never under-limit its own output. Exact maximum via a monotonic
+        // non-increasing queue, amortized O(1) per sample.
         float peak = 0.0f;
         for (int c = 0; c < nch; ++c)
         {
-            const float* ring = delay[c].data();
-            for (int k = 0; k < L; ++k)
-                peak = std::max (peak, std::fabs (ring[k]));
-            peak = std::max (peak, std::fabs (buffer.channel (c)[i]));
+            auto& w = window[std::size_t (c)];
+            // Expire before pushing: keeps at most L live entries so the
+            // circular write never collides with the front.
+            while (w.count > 0 && w.idx[std::size_t (w.head)] < seq - L)
+            {
+                w.head = (w.head + 1) % cap;
+                --w.count;
+            }
+            const float v = std::fabs (buffer.channel (c)[i]);
+            while (w.count > 0 && w.val[std::size_t ((w.head + w.count - 1) % cap)] <= v)
+                --w.count;
+            const int pos = (w.head + w.count) % cap;
+            w.val[std::size_t (pos)] = v;
+            w.idx[std::size_t (pos)] = seq;
+            ++w.count;
+            peak = std::max (peak, w.val[std::size_t (w.head)]);
         }
 
         const float thresholdLin = thresholdSmoother.next();
@@ -75,6 +97,7 @@ void LimiterProcessor::process (AudioBufferView& buffer)
         }
         if (++writePos == L)
             writePos = 0;
+        ++seq;
     }
 
     gainReductionDb.store (-20.0f * std::log10 (std::max (minGain, 1e-6f)),
@@ -85,6 +108,12 @@ void LimiterProcessor::reset()
 {
     for (auto& ring : delay)
         std::fill (ring.begin(), ring.end(), 0.0f);
+    for (auto& w : window)
+    {
+        w.head = 0;
+        w.count = 0;
+    }
+    seq = 0;
     writePos = 0;
     gain = 1.0f;
 }

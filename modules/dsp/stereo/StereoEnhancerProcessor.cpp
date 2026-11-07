@@ -21,6 +21,7 @@ void StereoEnhancerProcessor::prepare (const ProcessContext& ctx)
     widthSmoother.prepare (ctx.sampleRate, smoothTimeMs);
     midGainSmoother.prepare (ctx.sampleRate, smoothTimeMs);
     sideGainSmoother.prepare (ctx.sampleRate, smoothTimeMs);
+    balanceSmoother.prepare (ctx.sampleRate, smoothTimeMs);
     correlation.store (1.0f, std::memory_order_relaxed);
 }
 
@@ -38,10 +39,8 @@ void StereoEnhancerProcessor::process (AudioBufferView& buffer)
     float* left = buffer.channel (0);
     float* right = buffer.channel (1);
 
-    // balance < 0 attenuates the left channel, balance > 0 the right one.
-    const float gainL = balance <= 0.0f ? 1.0f + balance : 1.0f;
-    const float gainR = balance >= 0.0f ? 1.0f - balance : 1.0f;
-
+    // balance < 0 attenuates the left channel, balance > 0 the right one;
+    // gains derive from the smoothed balance per sample.
     float sumLR = 0.0f;
     float sumLL = 0.0f;
     float sumRR = 0.0f;
@@ -50,6 +49,9 @@ void StereoEnhancerProcessor::process (AudioBufferView& buffer)
     // rounding only (~1e-7 for |x| <= 1), never more.
     for (int i = 0; i < nf; ++i)
     {
+        const float bal = balanceSmoother.next();
+        const float gainL = bal <= 0.0f ? 1.0f + bal : 1.0f;
+        const float gainR = bal >= 0.0f ? 1.0f - bal : 1.0f;
         const float mid = 0.5f * (left[i] + right[i]);
         const float side = 0.5f * (left[i] - right[i]);
         const float center = mid * midGainSmoother.next();
@@ -70,6 +72,7 @@ void StereoEnhancerProcessor::reset()
     widthSmoother.snap();
     midGainSmoother.snap();
     sideGainSmoother.snap();
+    balanceSmoother.snap();
     correlation.store (1.0f, std::memory_order_relaxed);
 }
 
@@ -85,5 +88,8 @@ void StereoEnhancerProcessor::setSideGainDb (float db) noexcept
     sideGainSmoother.setTarget (std::pow (10.0f, db / 20.0f));
 }
 
-void StereoEnhancerProcessor::setBalance (float b) noexcept { balance = b; }
+void StereoEnhancerProcessor::setBalance (float b) noexcept
+{
+    balanceSmoother.setTarget (std::clamp (b, -1.0f, 1.0f));
+}
 }

@@ -20,6 +20,16 @@ void AuralisAudioProcessor::cacheParams()
     params.gain = apvts.getRawParameterValue ("gain");
     params.bypass = apvts.getRawParameterValue ("bypass");
     params.intensity = apvts.getRawParameterValue ("intensity");
+    params.eqEn = apvts.getRawParameterValue ("eq_en");
+    params.eqLowEn = apvts.getRawParameterValue ("eq_low_en");
+    params.eqBand1En = apvts.getRawParameterValue ("eq_band1_en");
+    params.eqBand2En = apvts.getRawParameterValue ("eq_band2_en");
+    params.eqHighEn = apvts.getRawParameterValue ("eq_high_en");
+    params.bassEn = apvts.getRawParameterValue ("bass_en");
+    params.clarityEn = apvts.getRawParameterValue ("clarity_en");
+    params.compEn = apvts.getRawParameterValue ("comp_en");
+    params.ambEn = apvts.getRawParameterValue ("amb_en");
+    params.stereoEn = apvts.getRawParameterValue ("stereo_en");
     params.eqLowFreq = apvts.getRawParameterValue ("eq_low_freq");
     params.eqLowGain = apvts.getRawParameterValue ("eq_low_gain");
     params.eqBand1Freq = apvts.getRawParameterValue ("eq_band1_freq");
@@ -81,14 +91,17 @@ void AuralisAudioProcessor::buildPipeline()
 
 void AuralisAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    pipeline.prepare ({ sampleRate, samplesPerBlock });
+    pipeline.prepare ({ sampleRate, samplesPerBlock, juce::jmax (1, getTotalNumOutputChannels()) });
     analyzerIn.prepare (sampleRate, samplesPerBlock);
     analyzerOut.prepare (sampleRate, samplesPerBlock);
     pushParameters();
     setLatencySamples (limiterProcessor->getLatencySamples());
 }
 
-void AuralisAudioProcessor::releaseResources() {}
+void AuralisAudioProcessor::releaseResources()
+{
+    pipeline.reset(); // fresh DSP state for the next prepare (covers sample-rate/layout changes)
+}
 
 bool AuralisAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
@@ -146,13 +159,88 @@ void AuralisAudioProcessor::pushParameters()
     limiterProcessor->setThresholdDb (params.limThreshold->load());
     limiterProcessor->setCeilingDb (params.limCeiling->load());
     limiterProcessor->setReleaseMs (params.limRelease->load());
+
+    applyEnables();
+}
+
+void AuralisAudioProcessor::pushNeutralParameters()
+{
+    // True bypass (U-01): every processor at its verified-neutral settings outputs the exact
+    // dry signal, transitions are click-free through the internal smoothers, and the limiter
+    // ring keeps advancing so the declared latency stays valid. Peaks above 0 dBFS still hit
+    // the limiter's 0 dB ceiling — the one intentional safety clamp during bypass.
+    gainProcessor->setGainDb (0.0f);
+    gainProcessor->setBypass (false);
+
+    eqProcessor->setBand (0, params.eqLowFreq->load(), 0.0f, 0.707f);
+    eqProcessor->setBand (1, params.eqBand1Freq->load(), 0.0f, params.eqBand1Q->load());
+    eqProcessor->setBand (2, params.eqBand2Freq->load(), 0.0f, params.eqBand2Q->load());
+    eqProcessor->setBand (3, params.eqHighFreq->load(), 0.0f, 0.707f);
+    eqProcessor->setBandEnabled (0, true);
+    eqProcessor->setBandEnabled (1, true);
+    eqProcessor->setBandEnabled (2, true);
+    eqProcessor->setBandEnabled (3, true);
+
+    bassProcessor->setShelfFreq (params.bassFreq->load());
+    bassProcessor->setShelfGainDb (0.0f);
+    bassProcessor->setSaturation (0.0f);
+    bassProcessor->setSubHighpassFreq (0.0f);
+
+    clarityProcessor->setAmount (0.0f);
+    clarityProcessor->setCenterFreq (params.clarityFreq->load());
+    clarityProcessor->setPresenceDb (0.0f);
+
+    compProcessor->setThresholdDb (0.0f);
+    compProcessor->setRatio (1.0f);
+    compProcessor->setAttackMs (params.compAttack->load());
+    compProcessor->setReleaseMs (params.compRelease->load());
+    compProcessor->setKneeDb (params.compKnee->load());
+    compProcessor->setMakeupDb (0.0f);
+    compProcessor->setRmsMode (params.compRms->load() > 0.5f);
+
+    ambProcessor->setMix (0.0f);
+    ambProcessor->setPredelayMs (params.ambPredelay->load());
+    ambProcessor->setDecaySeconds (params.ambDecay->load());
+    ambProcessor->setDamping (params.ambDamping->load());
+    ambProcessor->setWidth (params.ambWidth->load());
+
+    stereoProcessor->setWidth (1.0f);
+    stereoProcessor->setMidGainDb (0.0f);
+    stereoProcessor->setSideGainDb (0.0f);
+    stereoProcessor->setBalance (0.0f);
+
+    limiterProcessor->setThresholdDb (0.0f);
+    limiterProcessor->setCeilingDb (0.0f);
+    limiterProcessor->setReleaseMs (params.limRelease->load());
+
+    applyEnables();
+}
+
+void AuralisAudioProcessor::applyEnables()
+{
+    // Per-module enables (U-03). Slot order matches buildPipeline(); the limiter
+    // slot (7) is never disabled — that would invalidate the reported latency.
+    pipeline.setEnabled (1, params.eqEn->load() > 0.5f);
+    pipeline.setEnabled (2, params.bassEn->load() > 0.5f);
+    pipeline.setEnabled (3, params.clarityEn->load() > 0.5f);
+    pipeline.setEnabled (4, params.compEn->load() > 0.5f);
+    pipeline.setEnabled (5, params.ambEn->load() > 0.5f);
+    pipeline.setEnabled (6, params.stereoEn->load() > 0.5f);
+
+    eqProcessor->setBandEnabled (0, params.eqLowEn->load() > 0.5f);
+    eqProcessor->setBandEnabled (1, params.eqBand1En->load() > 0.5f);
+    eqProcessor->setBandEnabled (2, params.eqBand2En->load() > 0.5f);
+    eqProcessor->setBandEnabled (3, params.eqHighEn->load() > 0.5f);
 }
 
 void AuralisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
 
-    pushParameters();
+    if (params.bypass->load() > 0.5f)
+        pushNeutralParameters(); // true bypass: dry in, dry out, latency unchanged
+    else
+        pushParameters();
 
     float* channels[2];
     const auto numChannels = juce::jmin (buffer.getNumChannels(), getTotalNumOutputChannels());
@@ -229,11 +317,6 @@ void AuralisAudioProcessor::toggleAb()
 juce::String AuralisAudioProcessor::getAbLabel() const
 {
     return activeSlot == 0 ? "A" : "B";
-}
-
-float AuralisAudioProcessor::getCorrelation() const
-{
-    return stereoProcessor->getCorrelation();
 }
 
 juce::AudioProcessorEditor* AuralisAudioProcessor::createEditor()

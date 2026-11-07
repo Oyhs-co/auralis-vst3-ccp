@@ -21,7 +21,7 @@ public:
     void setWidth (float w) noexcept;        // 0..2, 1 = normal
     void setMidGainDb (float db) noexcept;   // -12..+12
     void setSideGainDb (float db) noexcept;  // -12..+12
-    void setBalance (float b) noexcept;      // -1..+1, unsmoothed; balance < 0 attenuates the left channel
+    void setBalance (float b) noexcept;      // -1..+1, smoothed 20 ms; balance < 0 attenuates the left channel
 
     // Correlation of the last processed stereo block, -1..+1 (+1 is mono-compatible).
     float getCorrelation() const noexcept { return correlation.load (std::memory_order_relaxed); }
@@ -31,7 +31,7 @@ private:
     Smoother widthSmoother;
     Smoother midGainSmoother;
     Smoother sideGainSmoother;
-    float balance = 0.0f;
+    Smoother balanceSmoother;
     std::atomic<float> correlation { 1.0f };
 };
 }

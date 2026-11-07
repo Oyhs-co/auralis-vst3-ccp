@@ -4,6 +4,9 @@
 #include "IDspProcessor.h"
 #include "Smoother.h"
 
+#include <cstddef>
+#include <vector>
+
 namespace auralis
 {
 // Slice 5 — Clarity/Fidelity: parallel harmonic exciter.
@@ -24,14 +27,12 @@ public:
 private:
     void updateCoefficients() noexcept;
 
-    static constexpr int maxChannels = 2;
-
     Smoother amount;    // exciter drive 0..1
     Smoother presence;  // linear gain 10^(dB/20)
     double centerFreq = 3000.0;
     double sampleRate = 48000.0;
     double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0; // RBJ highpass, direct form I
-    double x1[maxChannels] = {}, x2[maxChannels] = {};
-    double y1[maxChannels] = {}, y2[maxChannels] = {};
+    // Per-channel HPF state, sized by prepare()'s ProcessContext::numChannels.
+    std::vector<double> x1, x2, y1, y2;
 };
 }

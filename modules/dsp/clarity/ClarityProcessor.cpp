@@ -16,6 +16,11 @@ constexpr double kTwoPi = 6.283185307179586476925286766559;
 void ClarityProcessor::prepare (const ProcessContext& ctx)
 {
     sampleRate = ctx.sampleRate;
+    const int nch = ctx.numChannels > 0 ? ctx.numChannels : 1;
+    x1.assign (std::size_t (nch), 0.0);
+    x2.assign (std::size_t (nch), 0.0);
+    y1.assign (std::size_t (nch), 0.0);
+    y2.assign (std::size_t (nch), 0.0);
     amount.prepare (ctx.sampleRate, 30.0f);
     presence.prepare (ctx.sampleRate, 20.0f);
     updateCoefficients();
@@ -24,14 +29,16 @@ void ClarityProcessor::prepare (const ProcessContext& ctx)
 
 void ClarityProcessor::process (AudioBufferView& buffer)
 {
-    // shortcut: only the first two channels are excited; the plugin is mono/stereo today
-    const int nch = buffer.numChannels() < maxChannels ? buffer.numChannels() : maxChannels;
+    // shortcut: channels beyond prepare()'s numChannels pass dry, upgrade: re-prepare on layout change
+    const int prepared = (int) x1.size();
+    const int nch = buffer.numChannels() < prepared ? buffer.numChannels() : prepared;
     const int nf = buffer.numFrames();
 
     for (int c = 0; c < nch; ++c)
     {
         float* data = buffer.channel (c);
-        double hx1 = x1[c], hx2 = x2[c], hy1 = y1[c], hy2 = y2[c];
+        double hx1 = x1[std::size_t (c)], hx2 = x2[std::size_t (c)];
+        double hy1 = y1[std::size_t (c)], hy2 = y2[std::size_t (c)];
 
         for (int i = 0; i < nf; ++i)
         {
@@ -49,14 +56,16 @@ void ClarityProcessor::process (AudioBufferView& buffer)
             data[i] = comp * (x + a * g * clipped);
         }
 
-        x1[c] = hx1; x2[c] = hx2; y1[c] = hy1; y2[c] = hy2;
+        x1[std::size_t (c)] = hx1; x2[std::size_t (c)] = hx2;
+        y1[std::size_t (c)] = hy1; y2[std::size_t (c)] = hy2;
     }
 }
 
 void ClarityProcessor::reset()
 {
-    for (int c = 0; c < maxChannels; ++c)
-        x1[c] = x2[c] = y1[c] = y2[c] = 0.0;
+    const int nch = (int) x1.size();
+    for (int c = 0; c < nch; ++c)
+        x1[std::size_t (c)] = x2[std::size_t (c)] = y1[std::size_t (c)] = y2[std::size_t (c)] = 0.0;
     amount.snap();    // no zipper when playback restarts, as in GainProcessor
     presence.snap();
 }

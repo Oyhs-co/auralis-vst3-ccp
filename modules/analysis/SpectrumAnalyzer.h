@@ -28,14 +28,16 @@ public:
     std::atomic<float> peakHoldDb { -100.0f };
 
 private:
-    void analyze (const AudioBufferView& buffer);
+    void analyze();
 
     Fft fft { 1024 };
     std::vector<float> window;      // Hann, fft.size() samples
+    std::vector<float> ring;        // mono-sum history, fft.size() most recent samples
     std::vector<float> re, im;      // FFT scratch, fft.size() samples
     int bandEdges[numBands + 1] {}; // FFT bin index of each log edge, 20 Hz..20 kHz
     float bandNorm = 1.0f;          // 1 / (fft.size() / 4)
     int blockCounter = 0;
+    int ringPos = 0;                // next write index into ring (oldest sample)
     float peakHold = 0.0f;
 };
 }

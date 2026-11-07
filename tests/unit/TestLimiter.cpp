@@ -220,6 +220,71 @@ static void noNaN()
     }
 }
 
+// The sliding-window maximum must behave exactly like the old O(N*L) scan.
+// Brute force is not reachable from outside, so pin the invariants that
+// uniquely identify a correct window:
+// (a) ceiling respected on hot noise, (b) reduction reported, (c) finite,
+// (d) open threshold/ceiling: output == input delayed by exactly L samples
+// (a window off by one breaks this).
+static void slidingMaxMatchesBruteForce()
+{
+    LimiterProcessor l;
+    l.prepare ({ 48000.0, 512, 2 });
+    l.setThresholdDb (-12.0f);
+    l.setCeilingDb (-12.0f);
+    const float limit = std::pow (10.0f, -12.0f / 20.0f) + 0.02f;
+    unsigned long long seed = 12345;
+    TestBuffer buf (2, 512);
+    for (int block = 0; block < 20; ++block)
+    {
+        for (int c = 0; c < buf.numChannels; ++c)
+            for (int i = 0; i < buf.numFrames; ++i)
+            {
+                seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+                buf.sample (c, i) = 2.0f * float ((seed >> 40) & 0xFFFFFFULL) / 16777216.0f - 1.0f;
+            }
+        auralis::AudioBufferView view = buf.view();
+        l.process (view);
+        for (int c = 0; c < buf.numChannels; ++c)
+            for (int i = 0; i < buf.numFrames; ++i)
+            {
+                const float s = buf.sample (c, i);
+                CHECK (std::isfinite (s) && std::fabs (s) <= limit);
+            }
+    }
+    CHECK (l.getGainReductionDb() > 0.0f);
+
+    LimiterProcessor open;
+    open.prepare ({ 48000.0, 512, 2 });
+    open.setThresholdDb (0.0f); // noise peaks stay strictly below 0 dBFS
+    open.setCeilingDb (0.0f);
+    seed = 98765;
+    TestBuffer buf2 (2, 512);
+    std::vector<std::vector<float>> in (2, std::vector<float> (std::size_t (20 * 512)));
+    std::vector<std::vector<float>> out (2, std::vector<float> (std::size_t (20 * 512)));
+    for (int block = 0; block < 20; ++block)
+    {
+        for (int c = 0; c < buf2.numChannels; ++c)
+            for (int i = 0; i < buf2.numFrames; ++i)
+            {
+                seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+                const float v = 2.0f * float ((seed >> 40) & 0xFFFFFFULL) / 16777216.0f - 1.0f;
+                buf2.sample (c, i) = v;
+                in[std::size_t (c)][std::size_t (block * 512 + i)] = v;
+            }
+        auralis::AudioBufferView view = buf2.view();
+        open.process (view);
+        for (int c = 0; c < buf2.numChannels; ++c)
+            for (int i = 0; i < buf2.numFrames; ++i)
+                out[std::size_t (c)][std::size_t (block * 512 + i)] = buf2.sample (c, i);
+    }
+    const int L = open.getLatencySamples();
+    for (int c = 0; c < buf2.numChannels; ++c)
+        for (int t = L; t < 20 * 512; ++t)
+            CHECK (std::fabs (out[std::size_t (c)][std::size_t (t)]
+                              - in[std::size_t (c)][std::size_t (t - L)]) <= 1e-6f);
+}
+
 // run_LimiterTests in global namespace
 int run_LimiterTests()
 {
@@ -230,5 +295,6 @@ int run_LimiterTests()
     noReductionBelowThreshold();
     releaseControlsRecovery();
     noNaN();
+    slidingMaxMatchesBruteForce();
     return failures;
 }

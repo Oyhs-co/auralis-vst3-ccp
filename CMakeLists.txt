@@ -52,7 +52,9 @@ target_sources(auralis_dsp PRIVATE
     modules/dsp/limiter/LimiterProcessor.cpp
 )
 target_include_directories(auralis_dsp PUBLIC modules/dsp)
-target_link_libraries(auralis_dsp PUBLIC auralis_audio_core)
+target_link_libraries(auralis_dsp PUBLIC
+    auralis_audio_core
+    juce::juce_recommended_warning_flags)
 
 add_library(auralis_analysis STATIC)
 target_sources(auralis_analysis PRIVATE
@@ -60,12 +62,17 @@ target_sources(auralis_analysis PRIVATE
     modules/analysis/SpectrumAnalyzer.cpp
 )
 target_include_directories(auralis_analysis PUBLIC modules/analysis)
-target_link_libraries(auralis_analysis PUBLIC auralis_audio_core)
+target_link_libraries(auralis_analysis PUBLIC
+    auralis_audio_core
+    juce::juce_recommended_warning_flags)
 
 add_library(auralis_dsp_pipeline STATIC)
 target_sources(auralis_dsp_pipeline PRIVATE modules/dsp_pipeline/DspPipeline.cpp)
 target_include_directories(auralis_dsp_pipeline PUBLIC modules/dsp_pipeline)
-target_link_libraries(auralis_dsp_pipeline PUBLIC auralis_dsp auralis_analysis)
+target_link_libraries(auralis_dsp_pipeline PUBLIC
+    auralis_dsp
+    auralis_analysis
+    juce::juce_recommended_warning_flags)
 
 enable_testing()
 add_executable(auralis_tests
@@ -79,8 +86,11 @@ add_executable(auralis_tests
     tests/unit/TestLimiter.cpp
     tests/unit/TestFft.cpp
     tests/unit/TestAnalyzer.cpp
+    tests/unit/TestResilience.cpp
+    tests/unit/TestPresets.cpp
+    Source/presets/PresetManager.cpp
 )
-target_link_libraries(auralis_tests PRIVATE auralis_dsp_pipeline auralis_analysis)
+target_link_libraries(auralis_tests PRIVATE auralis_dsp_pipeline auralis_analysis juce::juce_core)
 add_test(NAME auralis_unit COMMAND auralis_tests)
 
 target_link_libraries(Auralis PRIVATE

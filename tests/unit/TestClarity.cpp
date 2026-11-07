@@ -33,7 +33,7 @@ struct TestBuffer
     int numChannels = 0;
     int numFrames = 0;
     std::vector<float> storage;
-    float* chans[2] { nullptr, nullptr };
+    float* chans[4] { nullptr, nullptr, nullptr, nullptr };
 };
 
 constexpr double kPi = 3.14159265358979323846;
@@ -156,7 +156,6 @@ static void noNaNLoud()
     p.setPresenceDb (6.0f);
     p.setCenterFreq (3000.0f);
     TestBuffer buf (2, 256);
-    unsigned int seed = 98765u;
     for (int block = 0; block < 8; ++block)
     {
         for (int c = 0; c < 2; ++c)
@@ -175,6 +174,19 @@ static void noNaNLoud()
     }
 }
 
+static void fourChannelsAllExcited()
+{
+    ClarityProcessor p;
+    p.prepare ({ 48000.0, 512, 4 });
+    p.setAmount (1.0f);
+    p.setPresenceDb (6.0f);
+    p.setCenterFreq (3000.0f);
+    TestBuffer buf (4, 256);
+    runBlocks (p, buf, 12, 6000.0, 0.25, 48000.0);
+    for (int c = 0; c < 4; ++c)
+        CHECK (peakAmplitude (buf, c) > 0.5f);
+}
+
 // run_ClarityTests in global namespace
 int run_ClarityTests()
 {
@@ -183,5 +195,6 @@ int run_ClarityTests()
     negativePresenceAttenuatesHighs();
     compensationKeepsLevelBounded();
     noNaNLoud();
+    fourChannelsAllExcited();
     return failures;
 }

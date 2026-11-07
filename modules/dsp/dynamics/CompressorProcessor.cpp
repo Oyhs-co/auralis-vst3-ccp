@@ -7,6 +7,14 @@
 
 namespace auralis
 {
+namespace
+{
+// 20 * log10 (2) in dB per unit of log2(); lets log2/exp2 replace log10/pow on
+// the sample path. Literal because constexpr std::log10 needs C++23.
+constexpr float kDbPerLog2 = 6.020599913279624f;
+constexpr float kInvDbPerLog2 = 1.0f / kDbPerLog2;
+}
+
 void CompressorProcessor::updateCoefficients() noexcept
 {
     coeffAttack = 1.0f - std::exp (-1000.0f / (attackMs * sampleRate));
@@ -19,8 +27,12 @@ void CompressorProcessor::prepare (const ProcessContext& ctx)
     sampleRate = (float) ctx.sampleRate;
     thresholdSmoother.prepare (sampleRate, 10.0f);
     makeupSmoother.prepare (sampleRate, 20.0f);
+    ratioSmoother.prepare (sampleRate, 20.0f);
+    kneeSmoother.prepare (sampleRate, 20.0f);
     thresholdSmoother.snap();
     makeupSmoother.snap();
+    ratioSmoother.snap();
+    kneeSmoother.snap();
     updateCoefficients();
     gainDb = 0.0f;
     detectorSq = 0.0f;
@@ -34,6 +46,8 @@ void CompressorProcessor::reset()
     grDb.store (0.0f, std::memory_order_relaxed);
     thresholdSmoother.snap();
     makeupSmoother.snap();
+    ratioSmoother.snap();
+    kneeSmoother.snap();
 }
 
 void CompressorProcessor::process (AudioBufferView& buffer)
@@ -56,8 +70,14 @@ void CompressorProcessor::process (AudioBufferView& buffer)
             env = std::sqrt (detectorSq);
         }
 
-        const float levelDb = 20.0f * std::log10 (env < 1e-6f ? 1e-6f : env);
+        const float levelDb = std::log2 (env < 1e-6f ? 1e-6f : env) * kDbPerLog2;
         const float overshoot = levelDb - thresholdSmoother.next();
+
+        // Smoothed ratio/knee; clamping ratio >= 1 guarantees no boost while it converges.
+        const float ratio = std::max (ratioSmoother.next(), 1.0f);
+        const float slope = 1.0f / ratio - 1.0f;
+        const float knee = kneeSmoother.next();
+        const float halfKnee = 0.5f * knee;
 
         // Soft knee: quadratic between -halfKnee..+halfKnee, linear above, 0 below.
         // slope <= 0, so attenuationDb <= 0 by construction.
@@ -72,7 +92,7 @@ void CompressorProcessor::process (AudioBufferView& buffer)
         gainDb += (targetDb - gainDb) * (targetDb < gainDb ? coeffAttack : coeffRelease);
 
         sumReductionDb += gainDb - makeupDb; // applied compression, excluding makeup
-        const float gainLinear = std::pow (10.0f, gainDb * (1.0f / 20.0f));
+        const float gainLinear = std::exp2 (gainDb * kInvDbPerLog2);
         for (int c = 0; c < nch; ++c)
             buffer.channel (c)[i] *= gainLinear;
     }
@@ -88,7 +108,7 @@ void CompressorProcessor::setThresholdDb (float db) noexcept
 
 void CompressorProcessor::setRatio (float ratio) noexcept
 {
-    slope = 1.0f / std::clamp (ratio, 1.0f, 20.0f) - 1.0f;
+    ratioSmoother.setTarget (std::clamp (ratio, 1.0f, 20.0f));
 }
 
 void CompressorProcessor::setAttackMs (float ms) noexcept
@@ -105,8 +125,7 @@ void CompressorProcessor::setReleaseMs (float ms) noexcept
 
 void CompressorProcessor::setKneeDb (float db) noexcept
 {
-    knee = std::clamp (db, 0.0f, 24.0f);
-    halfKnee = 0.5f * knee;
+    kneeSmoother.setTarget (std::clamp (db, 0.0f, 24.0f));
 }
 
 void CompressorProcessor::setMakeupDb (float db) noexcept

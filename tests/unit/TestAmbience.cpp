@@ -45,18 +45,7 @@ static float blockEnergy (const TestBuffer& b)
     return e;
 }
 
-static void runBlocks (AmbienceProcessor& p, TestBuffer& buf, int blocks, const std::vector<float>& inputPattern)
-{
-    for (int block = 0; block < blocks; ++block)
-    {
-        const float v = inputPattern[block % inputPattern.size()];
-        for (int c = 0; c < buf.numChannels; ++c)
-            for (int i = 0; i < buf.numFrames; ++i)
-                buf.sample (c, i) = v;
-        auto view = buf.view();
-        p.process (view);
-    }
-}
+// (unused runBlocks helper removed — dead code, AGENTS §4)
 
 static void zeroMixIsExactPassthrough()
 {
@@ -259,6 +248,38 @@ static void stabilityNoNaN()
     }
 }
 
+static void widthAndDampingAutomationIsContinuous()
+{
+    AmbienceProcessor a;
+    a.prepare ({ 48000.0, 512 });
+    a.setMix (1.0f);
+    a.setDecaySeconds (2.0f);
+    TestBuffer buf (2, 512);
+    float prev[2] = { 0.0f, 0.0f };
+    bool hasPrev = false;
+    for (int block = 0; block < 10; ++block)
+    {
+        const float t = float (block) / 9.0f; // 0..1 across 10 blocks
+        a.setWidth (1.0f - t);                // width 1 -> 0
+        a.setDamping (0.1f + 0.8f * t);       // damping 0.1 -> 0.9
+        for (int c = 0; c < buf.numChannels; ++c)
+            for (int i = 0; i < buf.numFrames; ++i)
+                buf.sample (c, i) = 0.1f; // continuous quiet signal
+        auto view = buf.view();
+        a.process (view);
+        for (int c = 0; c < buf.numChannels; ++c)
+            for (int i = 0; i < buf.numFrames; ++i)
+            {
+                const float s = buf.sample (c, i);
+                CHECK (std::isfinite (s));
+                if (hasPrev)
+                    CHECK (std::fabs (s - prev[c]) < 0.03f); // reverb changes are slow by design
+                prev[c] = s;
+            }
+        hasPrev = true;
+    }
+}
+
 // run_AmbienceTests in global namespace
 int run_AmbienceTests()
 {
@@ -268,5 +289,6 @@ int run_AmbienceTests()
     dampingDarkens();
     predelayOffsetsWet();
     stabilityNoNaN();
+    widthAndDampingAutomationIsContinuous();
     return failures;
 }

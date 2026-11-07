@@ -29,6 +29,9 @@ jobs:
         shell: powershell
         run: |
           Invoke-WebRequest -Uri https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip -OutFile pluginval_Windows.zip
+          $expected = "C08E61CE3B96DB41636F8EC7E76F4C7E2C13EBDAC7FA1B5A1F52B4F32EC715AB"
+          $actual = (Get-FileHash pluginval_Windows.zip -Algorithm SHA256).Hash
+          if ($actual -ne $expected) { throw "pluginval zip hash mismatch: $actual" }
           Expand-Archive -Path pluginval_Windows.zip -DestinationPath pluginval
           ./pluginval/pluginval.exe --strictness-level 8 --validate build-ci/Auralis_artefacts/VST3/Auralis.vst3
 

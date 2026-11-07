@@ -34,7 +34,7 @@ Initial DSP chain (plan §5.2): `Input → EQ → Bass → Clarity → Dynamics 
 | DSP processors | `modules/dsp/**` | `modules/audio_core` contract | `juce_audio_processors`, `juce_gui_basics`, any JUCE Component, files, registry, network |
 | DSP pipeline | `modules/dsp_pipeline` | `modules/dsp`, `modules/audio_core` | `juce_audio_processors`, `juce_gui_basics`, host logic |
 | audio_core contract | `modules/audio_core` | (self) | VST3, GUI, file I/O |
-| Presets | `Source/presets` | parameters, state | Audio processing, files (only in non-RT host calls) |
+| Presets | `Source/presets` | parameters, state, `juce_core` (JSON only) | `juce_audio_processors`, `juce_gui_basics`, audio processing, files (only in non-RT host calls) |
 | Analysis/telemetry | `Source/analysis`, `modules/telemetry` | `modules/audio_core` | Anything that locks or blocks the audio thread |
 | GUI | `Source/ui` | JUCE, parameters | Direct audio buffer manipulation |
 

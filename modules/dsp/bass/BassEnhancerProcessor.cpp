@@ -11,6 +11,7 @@ namespace
 {
     constexpr double kTwoPi = 6.283185307179586476925286766559;
     constexpr double kSqrtTwo = 1.4142135623730950488016887242097;
+    constexpr double kInvSqrtTwo = 0.7071067811865476; // Butterworth Q
 }
 
 void BassEnhancerProcessor::prepare (const ProcessContext& ctx)
@@ -34,6 +35,7 @@ void BassEnhancerProcessor::reset()
     {
         shelf.x1[c] = shelf.x2[c] = shelf.y1[c] = shelf.y2[c] = 0.0f;
         subHp.x1[c] = subHp.x2[c] = subHp.y1[c] = subHp.y2[c] = 0.0f;
+        subHp2.x1[c] = subHp2.x2[c] = subHp2.y1[c] = subHp2.y2[c] = 0.0f;
     }
     shelfB0Smoother.snap();
     shelfB1Smoother.snap();
@@ -99,13 +101,14 @@ void BassEnhancerProcessor::updateSubHighpass() noexcept
 {
     if (subHpFreq <= 0.0f)
     {
-        subHp.b0 = 1.0; subHp.b1 = 0.0; subHp.b2 = 0.0; subHp.a1 = 0.0; subHp.a2 = 0.0;
+        subHp.b0 = subHp2.b0 = 1.0; subHp.b1 = subHp2.b1 = 0.0; subHp.b2 = subHp2.b2 = 0.0;
+        subHp.a1 = subHp2.a1 = 0.0; subHp.a2 = subHp2.a2 = 0.0;
         return;
     }
     const double w0 = kTwoPi * subHpFreq / sampleRate;
     const double cosw0 = std::cos (w0);
     const double sinw0 = std::sin (w0);
-    const double alpha = sinw0 / (2.0 * kSqrtTwo); // 12 dB/oct Butterworth
+    const double alpha = sinw0 * kInvSqrtTwo; // Butterworth Q = 1/sqrt(2): 12 dB/oct per stage
     const double b0 = (1.0 + cosw0) * 0.5;
     const double b1 = -(1.0 + cosw0);
     const double b2 = (1.0 + cosw0) * 0.5;
@@ -113,11 +116,22 @@ void BassEnhancerProcessor::updateSubHighpass() noexcept
     const double a1 = -2.0 * cosw0;
     const double a2 = 1.0 - alpha;
 
-    subHp.b0 = b0 / a0;
-    subHp.b1 = b1 / a0;
-    subHp.b2 = b2 / a0;
-    subHp.a1 = a1 / a0;
-    subHp.a2 = a2 / a0;
+    subHp.b0 = subHp2.b0 = b0 / a0;
+    subHp.b1 = subHp2.b1 = b1 / a0;
+    subHp.b2 = subHp2.b2 = b2 / a0;
+    subHp.a1 = subHp2.a1 = a1 / a0;
+    subHp.a2 = subHp2.a2 = a2 / a0;
+}
+
+float BassEnhancerProcessor::tickSub (Biquad& b, float x, int c) noexcept
+{
+    const float y = (float) (b.b0 * (double) x + b.b1 * (double) b.x1[c] + b.b2 * (double) b.x2[c]
+                             - b.a1 * (double) b.y1[c] - b.a2 * (double) b.y2[c]);
+    b.x2[c] = b.x1[c];
+    b.x1[c] = x;
+    b.y2[c] = b.y1[c];
+    b.y1[c] = y;
+    return y;
 }
 
 void BassEnhancerProcessor::process (AudioBufferView& buffer)
@@ -138,16 +152,11 @@ void BassEnhancerProcessor::process (AudioBufferView& buffer)
         {
             float x = buffer.channel (c)[i];
 
-            // Sub highpass (if enabled)
+            // Sub highpass, two cascaded stages = 24 dB/oct (if enabled)
             if (subHpFreq > 0.0f)
             {
-                float y = (float) (subHp.b0 * (double) x + subHp.b1 * (double) subHp.x1[c] + subHp.b2 * (double) subHp.x2[c]
-                                   - subHp.a1 * (double) subHp.y1[c] - subHp.a2 * (double) subHp.y2[c]);
-                subHp.x2[c] = subHp.x1[c];
-                subHp.x1[c] = x;
-                subHp.y2[c] = subHp.y1[c];
-                subHp.y1[c] = y;
-                x = y;
+                x = tickSub (subHp, x, c);
+                x = tickSub (subHp2, x, c);
             }
 
             // Low shelf

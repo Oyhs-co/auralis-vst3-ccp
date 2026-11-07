@@ -9,10 +9,11 @@ v0.2.0. Implemented: master gain, 4-band EQ, bass enhancer, clarity exciter, com
 ## Features
 
 - Fixed DSP chain: `Gain → EQ → Bass → Clarity → Dynamics → Ambience → Stereo → Limiter`
-- Global **Intensity** control (0 = neutral, 1 = as set), per-parameter host automation (38 stable IDs)
+- Global **Intensity** control (0 = neutral, 1 = as set), per-parameter host automation (49 stable IDs, including per-module and per-band enables)
+- **True bypass**: the whole chain returns the dry signal (latency-compensated, click-free via parameter smoothing)
 - **Presets**: 3 factory presets + user presets as editable `.auralis` JSON files with `schema_version`
 - **A/B** comparison and one-click reset, both persisted in the host state
-- Spectrum view (32 log bands, input/output) with RMS meters and stereo correlation
+- Spectrum view (32 log bands, input/output) with RMS meters, stereo correlation and compressor/limiter gain-reduction readouts
 - Lookahead limiter reports its latency to the host; reverb reports its tail length
 
 ## Requirements
@@ -37,6 +38,17 @@ powershell -File tools\install.ps1
 ```
 
 Then rescan plugins in FL Studio.
+
+## Documentation
+
+Full documentation lives in [`docs/`](docs/README.md). Start here:
+
+- [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) — install, usage in FL Studio, use cases, FAQ
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — layers, C4 diagrams, thread model
+- [`docs/DSP-ALGORITHMS.md`](docs/DSP-ALGORITHMS.md) — signal processing math per module
+- [`docs/PARAMETERS.md`](docs/PARAMETERS.md) — stable parameter reference (IDs, ranges, defaults)
+- [`docs/BUILD-TEST-RELEASE.md`](docs/BUILD-TEST-RELEASE.md) — build, tests, CI, packaging
+- [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — support playbook and diagnostics
 
 ## License
 

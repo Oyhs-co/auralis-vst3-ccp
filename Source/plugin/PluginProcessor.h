@@ -55,8 +55,9 @@ public:
     bool loadUserPreset (const juce::File& file);
     void toggleAb();
     juce::String getAbLabel() const;
-    float getCorrelation() const;
     const std::atomic<float>& getStereoCorrelationAtomic() const { return stereoProcessor->getCorrelationAtomic(); }
+    const std::atomic<float>& getCompressorGrAtomic() const { return compProcessor->getGainReductionAtomic(); }
+    const std::atomic<float>& getLimiterGrAtomic() const { return limiterProcessor->getGainReductionAtomic(); }
     auralis::SpectrumAnalyzer& getInputAnalyzer() { return analyzerIn; }
     auralis::SpectrumAnalyzer& getOutputAnalyzer() { return analyzerOut; }
 
@@ -67,6 +68,16 @@ private:
         std::atomic<float>* gain = nullptr;
         std::atomic<float>* bypass = nullptr;
         std::atomic<float>* intensity = nullptr;
+        std::atomic<float>* eqEn = nullptr;
+        std::atomic<float>* eqLowEn = nullptr;
+        std::atomic<float>* eqBand1En = nullptr;
+        std::atomic<float>* eqBand2En = nullptr;
+        std::atomic<float>* eqHighEn = nullptr;
+        std::atomic<float>* bassEn = nullptr;
+        std::atomic<float>* clarityEn = nullptr;
+        std::atomic<float>* compEn = nullptr;
+        std::atomic<float>* ambEn = nullptr;
+        std::atomic<float>* stereoEn = nullptr;
         std::atomic<float>* eqLowFreq = nullptr;
         std::atomic<float>* eqLowGain = nullptr;
         std::atomic<float>* eqBand1Freq = nullptr;
@@ -108,8 +119,10 @@ private:
     void cacheParams();
     void buildPipeline();
     void pushParameters();
+    void pushNeutralParameters(); // U-01: true bypass = neutral chain, seamless via internal smoothers
     void snapshotTo (juce::ValueTree& slot);
     void restoreFrom (const juce::ValueTree& slot);
+    void applyEnables();
 
     friend class AuralisAudioProcessorEditor;
 

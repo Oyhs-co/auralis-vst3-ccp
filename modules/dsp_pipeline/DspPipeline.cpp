@@ -2,6 +2,8 @@
 
 #include "DspPipeline.h"
 
+#include <cmath>
+
 namespace auralis
 {
 IDspProcessor* DspPipeline::addProcessor (std::unique_ptr<IDspProcessor> p)
@@ -19,6 +21,15 @@ void DspPipeline::prepare (const ProcessContext& ctx)
 
 void DspPipeline::process (AudioBufferView& buffer)
 {
+    // contract §3: hosts can deliver NaN/inf; sanitize once here so no processor state is poisoned
+    for (int c = 0; c < buffer.numChannels(); ++c)
+    {
+        float* ch = buffer.channel (c);
+        for (int i = 0; i < buffer.numFrames(); ++i)
+            if (! std::isfinite (ch[i]))
+                ch[i] = 0.0f;
+    }
+
     for (auto& slot : slots)
         if (slot.enabled.load() && slot.proc != nullptr)
             slot.proc->process (buffer);

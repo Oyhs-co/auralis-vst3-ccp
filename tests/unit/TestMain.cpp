@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+﻿// SPDX-License-Identifier: AGPL-3.0-only
 // Host-side unit tests for the Auralis DSP pipeline and all effect processors.
 
 #include "DspTypes.h"
@@ -22,6 +22,8 @@ int run_StereoTests();
 int run_LimiterTests();
 int run_FftTests();
 int run_AnalyzerTests();
+int run_ResilienceTests();
+int run_PresetsTests();
 
 using auralis::DspPipeline;
 
@@ -101,7 +103,7 @@ void emptyPipelineIsPassthrough()
 void unityGainIsPassthrough()
 {
     DspPipeline pipeline;
-    auto* gain = addGain (pipeline, { 44100.0, 512 }, 0.0f);
+    addGain (pipeline, { 44100.0, 512 }, 0.0f);
     TestBuffer buf (2, 256);
     fillRamp (buf, -0.3f, 0.002f);
     for (int block = 0; block < 3; ++block) processAndCheckPassthrough (pipeline, buf, 1e-6f);
@@ -110,7 +112,7 @@ void unityGainIsPassthrough()
 void gain6dBIncreasesAmplitude()
 {
     DspPipeline pipeline;
-    auto* gain = addGain (pipeline, { 48000.0, 512 }, 6.0f);
+    addGain (pipeline, { 48000.0, 512 }, 6.0f);
     TestBuffer buf (2, 256);
     for (int block = 0; block < 8; ++block)
     {
@@ -135,7 +137,7 @@ void bypassIsPassthrough()
 void disabledProcessorIsPassthrough()
 {
     DspPipeline pipeline;
-    auto* gain = addGain (pipeline, { 48000.0, 512 }, 6.0f);
+    addGain (pipeline, { 48000.0, 512 }, 6.0f);
     pipeline.setEnabled (0, false);
     TestBuffer buf (2, 256);
     fillRamp (buf, -0.2f, 0.003f);
@@ -145,7 +147,7 @@ void disabledProcessorIsPassthrough()
 void variableBlockSizes()
 {
     DspPipeline pipeline;
-    auto* gain = addGain (pipeline, { 48000.0, 1024 }, 6.0f);
+    addGain (pipeline, { 48000.0, 1024 }, 6.0f);
     TestBuffer buf (2, 1024);
     const int sizes[] = { 1, 7, 64, 1024, 33 };
     for (int n : sizes)
@@ -166,7 +168,7 @@ void variableBlockSizes()
 void smoothingIsContinuous()
 {
     DspPipeline pipeline;
-    auto* gain = addGain (pipeline, { 48000.0, 512 }, 12.0f);
+    addGain (pipeline, { 48000.0, 512 }, 12.0f);
     TestBuffer buf (2, 16);
     fillRamp (buf, 0.5f, 0.0f);
     process (pipeline, buf);
@@ -179,7 +181,7 @@ void smoothingIsContinuous()
 void noNaNWithAlternatingSignal()
 {
     DspPipeline pipeline;
-    auto* gain = addGain (pipeline, { 96000.0, 512 }, 12.0f);
+    addGain (pipeline, { 96000.0, 512 }, 12.0f);
     TestBuffer buf (2, 128);
     for (int block = 0; block < 4; ++block)
     {
@@ -196,7 +198,7 @@ void noNaNWithAlternatingSignal()
 void monoPipeline()
 {
     DspPipeline pipeline;
-    auto* gain = addGain (pipeline, { 48000.0, 512 }, 0.0f);
+    addGain (pipeline, { 48000.0, 512 }, 0.0f);
     TestBuffer buf (1, 64);
     fillRamp (buf, 0.5f, -0.01f);
     processAndCheckPassthrough (pipeline, buf, 1e-6f);
@@ -236,6 +238,8 @@ int main()
     failures += run_LimiterTests();
     failures += run_FftTests();
     failures += run_AnalyzerTests();
+    failures += run_ResilienceTests();
+    failures += run_PresetsTests();
 
     if (failures == 0)
     {

@@ -6,8 +6,8 @@
 
 namespace auralis
 {
-// Slice 4 — Bass Enhancer: low-shelf biquad + optional sub-highpass + soft saturation + level compensation.
-// shortcut: sub protection is a single 12 dB/oct biquad, upgrade: cascade two stages for 24 dB/oct.
+// Slice 4 — Bass Enhancer: low-shelf biquad + optional 24 dB/oct sub-highpass
+// (two cascaded RBJ stages, LR4-style -6 dB at fc) + soft saturation + level compensation.
 class BassEnhancerProcessor : public IDspProcessor
 {
 public:
@@ -35,9 +35,11 @@ private:
 
     void updateShelf() noexcept;
     void updateSubHighpass() noexcept;
+    static float tickSub (Biquad& b, float x, int c) noexcept;
 
     Biquad shelf;
     Biquad subHp;
+    Biquad subHp2;              // second identical stage: 24 dB/oct total
 
     Smoother shelfB0Smoother;
     Smoother shelfB1Smoother;

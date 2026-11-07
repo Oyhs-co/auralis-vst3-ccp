@@ -32,11 +32,22 @@ public:
     int getLatencySamples() const noexcept { return latency; }
     // Positive dB of gain reduction applied during the last processed block.
     float getGainReductionDb() const noexcept;
+    const std::atomic<float>& getGainReductionAtomic() const noexcept { return gainReductionDb; }
 
 private:
-    static constexpr int kMaxChannels = 2;
+    // Exact sliding-window maximum over one channel's last L+1 inputs, kept as
+    // a monotonic non-increasing queue in a circular buffer (amortized O(1)
+    // per sample). Signed indices: seq - L must not wrap before the window fills.
+    struct SlidingMax
+    {
+        std::vector<float> val;      // queue values, capacity == L + 1
+        std::vector<long long> idx;  // sequence index of each queued value
+        int head = 0;                // front position == current window maximum
+        int count = 0;               // live elements
+    };
 
-    std::vector<float> delay[kMaxChannels]; // per-channel ring, size == latency
+    std::vector<std::vector<float>> delay; // per-channel ring, size == latency
+    std::vector<SlidingMax> window;        // per-channel sliding maximum state
     Smoother thresholdSmoother;             // smoothed threshold target, linear
     float sampleRate = 48000.0f;
     float releaseMs = 100.0f;
@@ -44,6 +55,7 @@ private:
     float gain = 1.0f;                      // shared per-sample envelope
     int latency = 0;                        // lookahead L in samples
     int writePos = 0;                       // ring write position == oldest sample
+    long long seq = 0;                      // input sample counter for window expiry
     std::atomic<float> gainReductionDb { 0.0f };
 };
 }

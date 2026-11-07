@@ -16,3 +16,8 @@ Thumbs.db
 #Internal Docummentation
 Plan_Auralis_VST3_Cpp_JUCE_OpenSource.md
 # Note: JUCE/ is a pinned git submodule (tag 9.0.5) — it must stay tracked.
+
+# Debug probe artifacts
+*.obj
+*.pdb
+*.ilk

@@ -3,14 +3,12 @@
 
 #include "IDspProcessor.h"
 
-#include <array>
-
 namespace auralis
 {
 // Slice 3 — Equalizer: 4 fixed RBJ biquad bands (low shelf, peaking, peaking, high shelf).
-// Coefficients recomputed per block when dirty; process runs direct form I.
-// shortcut: shelf/peaking freq and Q jump without smoothing, mild zipper on automation;
-// upgrade: interpolate coefficients.
+// Target coefficients are recomputed per block only for bands whose values changed;
+// current coefficients per-sample smooth toward the targets (15 ms) so automation is
+// zipper-free. Process runs direct form I.
 class EqualizerProcessor : public IDspProcessor
 {
 public:
@@ -25,6 +23,7 @@ public:
 private:
     static constexpr int maxBands = 4;
     static constexpr int maxChannels = 2;
+    static constexpr double smoothTimeSeconds = 0.005; // coefficient lerp; perceived gain settling ≈ 10× this
 
     struct Band
     {
@@ -32,7 +31,11 @@ private:
         float gainDb = 0.0f;
         float q = 0.707f;
         bool enabled = true;
-        bool dirty = true;
+        bool dirty = true; // coefficients still converging toward target
+        // Target coefficients (written by updateBand) and current coefficients (used by the
+        // sample loop, smoothed per sample). Current starts as identity: a gain-0 band has
+        // mathematically identity targets with b==a bitwise, so no audible ramp occurs.
+        double tb0 = 1.0, tb1 = 0.0, tb2 = 0.0, ta1 = 0.0, ta2 = 0.0;
         double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
         float x1[maxChannels] = {};
         float x2[maxChannels] = {};
@@ -44,5 +47,6 @@ private:
 
     Band bands[maxBands];
     double sampleRate = 48000.0;
+    double smoothAlpha = 0.0;
 };
 }

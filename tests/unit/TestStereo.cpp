@@ -159,15 +159,50 @@ static void balanceShiftsChannels()
 {
     StereoEnhancerProcessor s;
     s.prepare ({ 48000.0, 512 });
-    s.setBalance (-0.5f); // unsmoothed; gL = 0.5, gR = 1
+    s.setBalance (-0.5f); // smoothed 20 ms; settles to gL = 0.5, gR = 1
     TestBuffer buf (2, 256);
-    for (int block = 0; block < 2; ++block)
+    for (int block = 0; block < 40; ++block) // settle past the smoother time
     {
         fillRamp (buf, 0.5f, 0.0f); // refill: dual mono 0.5 each block
         process (s, buf);
     }
     CHECK (std::fabs (peak (buf, 0) - 0.25f) <= 0.0075f);
     CHECK (std::fabs (peak (buf, 1) - 0.5f) <= 0.015f);
+}
+
+// Automate balance 0 -> -1 on a constant dual-mono input: the smoothed gain
+// must move without zipper noise (a constant input isolates automation from
+// waveform deltas).
+static void balanceAutomationIsContinuous()
+{
+    StereoEnhancerProcessor s;
+    s.prepare ({ 48000.0, 256 });
+    TestBuffer buf (2, 256);
+    float prevL = 0.0f;
+    float prevR = 0.0f;
+    bool hasPrev = false;
+    float maxDiff = 0.0f;
+    for (int block = 0; block < 10; ++block)
+    {
+        s.setBalance (-0.1f * float (block + 1)); // 0 -> -1, one change per block
+        fillRamp (buf, 0.5f, 0.0f); // dual mono 0.5
+        process (s, buf);
+        for (int i = 0; i < buf.numFrames; ++i)
+        {
+            const float l = buf.sample (0, i);
+            const float r = buf.sample (1, i);
+            CHECK (std::isfinite (l) && std::isfinite (r));
+            if (hasPrev)
+            {
+                maxDiff = std::max (maxDiff, std::fabs (l - prevL));
+                maxDiff = std::max (maxDiff, std::fabs (r - prevR));
+            }
+            prevL = l;
+            prevR = r;
+            hasPrev = true;
+        }
+    }
+    CHECK (maxDiff < 0.02f);
 }
 
 static void correlationValues()
@@ -247,6 +282,7 @@ int run_StereoTests()
         { "sideGainShapesImage", sideGainShapesImage },
         { "midGainShapesCenter", midGainShapesCenter },
         { "balanceShiftsChannels", balanceShiftsChannels },
+        { "balanceAutomationIsContinuous", balanceAutomationIsContinuous },
         { "correlationValues", correlationValues },
         { "monoInputPassthrough", monoInputPassthrough },
         { "noNaN", noNaN },

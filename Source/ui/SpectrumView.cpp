@@ -16,8 +16,10 @@ float dbToHeight (float db)
 } // namespace
 
 SpectrumView::SpectrumView (SpectrumAnalyzer& inputAnalyzer, SpectrumAnalyzer& outputAnalyzer,
-                            const std::atomic<float>& correlationRef)
-    : analyzerIn (inputAnalyzer), analyzerOut (outputAnalyzer), correlation (correlationRef)
+                            const std::atomic<float>& correlationRef,
+                            const std::atomic<float>& compressorGrDb, const std::atomic<float>& limiterGrDb)
+    : analyzerIn (inputAnalyzer), analyzerOut (outputAnalyzer), correlation (correlationRef),
+      compressorGr (compressorGrDb), limiterGr (limiterGrDb)
 {
     setOpaque (true);
 }
@@ -54,18 +56,24 @@ void SpectrumView::paint (juce::Graphics& g)
         g.fillRect (spectrumArea.getX(), spectrumArea.getBottom() - hold * spectrumArea.getHeight(),
                     spectrumArea.getWidth(), 1.5f);
 
-    // Metering line: in/out RMS + correlation.
+    // Metering line: in/out RMS, correlation and gain reduction.
     const float inRms = analyzerIn.rmsDb.load (std::memory_order_relaxed);
     const float outRms = analyzerOut.rmsDb.load (std::memory_order_relaxed);
     const float corr = juce::jlimit (-1.0f, 1.0f, correlation.load (std::memory_order_relaxed));
+    const float compGr = compressorGr.load (std::memory_order_relaxed);
+    const float limGr = limiterGr.load (std::memory_order_relaxed);
 
     g.setColour (juce::Colours::grey);
     g.setFont (13.0f);
     auto meterLine = area.withTop (meterTop);
-    g.drawText (juce::String::formatted ("In %.1f dB", inRms), meterLine.removeFromLeft (area.getWidth() / 3.0f),
+    g.drawText (juce::String::formatted ("In %.1f dB", inRms), meterLine.removeFromLeft (area.getWidth() / 5.0f),
                 juce::Justification::centredLeft);
-    g.drawText (juce::String::formatted ("Out %.1f dB", outRms), meterLine.removeFromLeft (area.getWidth() / 3.0f),
+    g.drawText (juce::String::formatted ("Out %.1f dB", outRms), meterLine.removeFromLeft (area.getWidth() / 5.0f),
                 juce::Justification::centredLeft);
-    g.drawText (juce::String::formatted ("Corr %+.2f", corr), meterLine, juce::Justification::centredLeft);
+    g.drawText (juce::String::formatted ("Corr %+.2f", corr), meterLine.removeFromLeft (area.getWidth() / 5.0f),
+                juce::Justification::centredLeft);
+    g.drawText (juce::String::formatted ("GR c %.1f", compGr), meterLine.removeFromLeft (area.getWidth() / 5.0f),
+                juce::Justification::centredLeft);
+    g.drawText (juce::String::formatted ("GR l %.1f", limGr), meterLine, juce::Justification::centredLeft);
 }
 } // namespace auralis

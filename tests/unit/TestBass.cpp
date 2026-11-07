@@ -92,8 +92,8 @@ static void subProtectionAttenuatesSubs()
     p.prepare ({ 48000.0, 512 });
     p.setSubHighpassFreq (40.0f);
     TestBuffer buf (2, 256);
-    runBlocks (p, buf, 8, 25.0, 0.5, 48000.0);
-    CHECK (peakAmplitude (buf, 0) < 0.25f);
+    runBlocks (p, buf, 16, 25.0, 0.5, 48000.0);
+    CHECK (peakAmplitude (buf, 0) < 0.1f);
     runBlocks (p, buf, 8, 200.0, 0.5, 48000.0);
     CHECK (peakAmplitude (buf, 0) > 0.4f);
 }

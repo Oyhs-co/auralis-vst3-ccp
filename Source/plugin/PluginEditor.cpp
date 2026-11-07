@@ -21,7 +21,8 @@ AuralisAudioProcessorEditor::AuralisAudioProcessorEditor (AuralisAudioProcessor&
       processor (p),
       intensityAttachment (p.apvts, "intensity", intensitySlider),
       bypassAttachment (p.apvts, "bypass", bypassBtn),
-      spectrum (p.getInputAnalyzer(), p.getOutputAnalyzer(), p.getStereoCorrelationAtomic())
+      spectrum (p.getInputAnalyzer(), p.getOutputAnalyzer(), p.getStereoCorrelationAtomic(),
+                p.getCompressorGrAtomic(), p.getLimiterGrAtomic())
 {
     for (auto& factory : auralis::PresetManager::factoryPresets())
         presetBox.addItem (factory.name, presetBox.getNumItems() + 1);

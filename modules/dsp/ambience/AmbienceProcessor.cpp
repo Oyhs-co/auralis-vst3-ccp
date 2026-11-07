@@ -13,6 +13,14 @@ namespace
     constexpr float inputGain = 1.0f / 8.0f; // per-line injection; keeps summed buses in headroom
     constexpr float busGain = 0.5f;          // 4 lines summed per wet bus
     constexpr float mixSilent = 1e-4f;       // below this the output is the exact dry signal
+    constexpr float widthSmoothMs = 20.0f;
+    constexpr float dampSmoothMs = 50.0f;    // reverb character changes are slow by design
+}
+
+AmbienceProcessor::AmbienceProcessor() noexcept
+{
+    // Current default width member was 1.0: keep the wet path at original stereo until configured.
+    widthSmoother.setTarget (1.0f);
 }
 
 void AmbienceProcessor::prepare (const ProcessContext& ctx)
@@ -36,6 +44,9 @@ void AmbienceProcessor::prepare (const ProcessContext& ctx)
     predelayPos = 0;
     updatePredelaySamples();
     ap1X = ap1Y = ap2X = ap2Y = 0.0f;
+    updateDampCoeffTarget(); // recompute at this sample rate before the snap
+    dampSmoother.prepare (sampleRate, dampSmoothMs);
+    widthSmoother.prepare (sampleRate, widthSmoothMs); // also snaps: no zipper on reload
     mixSmoother.prepare (sampleRate, 30.0f);
 }
 
@@ -49,10 +60,8 @@ void AmbienceProcessor::process (AudioBufferView& buffer)
     float* ch0 = buffer.channel (0);
     float* ch1 = nch > 1 ? buffer.channel (1) : nullptr;
 
-    // Per-block control recompute: 8 pow + 1 exp, negligible next to the sample loop.
+    // shortcut: decay gains recompute per block (8 pow), level steps are masked by the tail; upgrade: smooth gains per sample or crossfade
     const float sr = (float) sampleRate;
-    const float fcHz = 18000.0f * std::pow (10.0f, -damping);
-    const float dampCoeff = 1.0f - std::exp (-twoPi * fcHz / sr);
     for (int i = 0; i < numLines; ++i)
         gain[i] = std::pow (10.0f, -3.0f * ((float) lineLength[i] / sr) / decaySeconds);
 
@@ -73,11 +82,13 @@ void AmbienceProcessor::process (AudioBufferView& buffer)
         ap2Y = d;
 
         // Predelay ring: write then read so a 0 ms offset is exactly 0 samples.
+        // shortcut: predelay position is integer-sample and block-quantized, audible only when automating predelay; upgrade: fractional delay interpolation
         predelay[predelayPos] = d;
         d = predelay[predelayPos - predelaySamples
                      + (predelayPos < predelaySamples ? predelayLen : 0)];
         predelayPos = predelayPos + 1 == predelayLen ? 0 : predelayPos + 1;
 
+        const float dampCoeff = dampSmoother.next(); // one lerp per sample, shared by all 8 lines
         float s[numLines];
         float sum = 0.0f;
         for (int i = 0; i < numLines; ++i)
@@ -104,8 +115,9 @@ void AmbienceProcessor::process (AudioBufferView& buffer)
 
         const float mid = 0.5f * (wetL + wetR);
         const float side = 0.5f * (wetL - wetR);
-        wetL = mid + side * width;
-        wetR = mid - side * width;
+        const float w = widthSmoother.next();
+        wetL = mid + side * w;
+        wetR = mid - side * w;
 
         const float m = mixSmoother.next();
         if (m < mixSilent)
@@ -137,6 +149,8 @@ void AmbienceProcessor::reset()
     std::fill (predelay.begin(), predelay.end(), 0.0f);
     predelayPos = 0;
     ap1X = ap1Y = ap2X = ap2Y = 0.0f;
+    widthSmoother.snap();
+    dampSmoother.snap();
 }
 
 void AmbienceProcessor::setMix (float mix01) noexcept
@@ -158,11 +172,19 @@ void AmbienceProcessor::setDecaySeconds (float seconds) noexcept
 void AmbienceProcessor::setDamping (float damping01) noexcept
 {
     damping = damping01 < 0.0f ? 0.0f : (damping01 > 1.0f ? 1.0f : damping01);
+    updateDampCoeffTarget();
 }
 
 void AmbienceProcessor::setWidth (float width01) noexcept
 {
-    width = width01 < 0.0f ? 0.0f : (width01 > 1.0f ? 1.0f : width01);
+    widthSmoother.setTarget (width01 < 0.0f ? 0.0f : (width01 > 1.0f ? 1.0f : width01));
+}
+
+void AmbienceProcessor::updateDampCoeffTarget() noexcept
+{
+    // fc = 18 kHz..1.8 kHz over damping 0..1, as the one-pole feedback coefficient.
+    const float fcHz = 18000.0f * std::pow (10.0f, -damping);
+    dampSmoother.setTarget (1.0f - std::exp (-twoPi * fcHz / (float) sampleRate));
 }
 
 void AmbienceProcessor::updatePredelaySamples() noexcept

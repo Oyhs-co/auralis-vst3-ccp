@@ -53,15 +53,7 @@ static float measureAmplitude (const TestBuffer& b)
     return peak;
 }
 
-static void processBlocks (auralis::CompressorProcessor& c, TestBuffer& buf, int blocks, int& pos)
-{
-    for (int block = 0; block < blocks; ++block)
-    {
-        auto view = buf.view();
-        c.process (view);
-        pos += buf.numFrames;
-    }
-}
+// (unused processBlocks helper removed — dead code, AGENTS §4)
 
 static void transparentAtDefaults()
 {
@@ -259,6 +251,44 @@ static void rmsModeReducesGain()
     CHECK (c.getGainReductionDb() <= 24.0f);
 }
 
+// Automate ratio 1 -> 8 while compressing: smoother + gain ballistics must keep
+// every transition finite and free of zipper noise. A 100 Hz carrier keeps the
+// signal's own sample-to-sample delta (~0.0065) far below the continuity bound.
+static void ratioKneeAutomationIsContinuous()
+{
+    auralis::CompressorProcessor c;
+    c.prepare ({ 48000.0, 256 });
+    c.setThresholdDb (-20.0f);
+    c.setAttackMs (5.0f);
+    c.setReleaseMs (100.0f);
+    c.setKneeDb (6.0f);
+
+    TestBuffer buf (2, 256);
+    int pos = 0;
+    float prev[2] = { 0.0f, 0.0f };
+    bool hasPrev = false;
+    float maxDiff = 0.0f;
+    for (int block = 0; block < 14; ++block)
+    {
+        c.setRatio (1.0f + 0.5f * float (block + 1)); // 1.5 .. 8, one change per block
+        fillSine (buf, 0.5f, 100.0, 48000.0, pos);
+        pos += buf.numFrames;
+        auto view = buf.view();
+        c.process (view);
+        for (int ch = 0; ch < buf.numChannels; ++ch)
+            for (int i = 0; i < buf.numFrames; ++i)
+            {
+                const float s = buf.sample (ch, i);
+                CHECK (std::isfinite (s) && std::fabs (s) <= 2.0f);
+                if (hasPrev)
+                    maxDiff = std::max (maxDiff, std::fabs (s - prev[ch]));
+                prev[ch] = s;
+                hasPrev = true;
+            }
+    }
+    CHECK (maxDiff < 0.02f);
+}
+
 // run_DynamicsTests in global namespace
 int run_DynamicsTests()
 {
@@ -270,5 +300,6 @@ int run_DynamicsTests()
     grMeterReportsReduction();
     noNaNWithExtremeSettings();
     rmsModeReducesGain();
+    ratioKneeAutomationIsContinuous();
     return failures;
 }

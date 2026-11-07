@@ -27,6 +27,7 @@ void SpectrumAnalyzer::prepare (double sampleRate, int /*maxBlockSize*/)
 {
     const int n = fft.size();
     window.resize ((std::size_t) n);
+    ring.resize ((std::size_t) n);
     re.resize ((std::size_t) n);
     im.resize ((std::size_t) n);
     for (int i = 0; i < n; ++i)
@@ -48,7 +49,9 @@ void SpectrumAnalyzer::prepare (double sampleRate, int /*maxBlockSize*/)
 void SpectrumAnalyzer::reset()
 {
     blockCounter = 0;
+    ringPos = 0;
     peakHold = 0.0f;
+    std::fill (ring.begin(), ring.end(), 0.0f);
     for (auto& b : band)
         b.store (0.0f, std::memory_order_relaxed);
     rmsDb.store (dbFloor, std::memory_order_relaxed);
@@ -66,6 +69,8 @@ void SpectrumAnalyzer::process (const AudioBufferView& buffer)
     const int nch = std::min (buffer.numChannels(), 2);
     const float* ch0 = buffer.channel (0);
     const float* ch1 = nch > 1 ? buffer.channel (1) : nullptr;
+    const int n = fft.size();
+    const bool haveRing = ! ring.empty(); // before prepare() there is no history to fill
 
     double sumSquares = 0.0;
     float peak = 0.0f;
@@ -75,6 +80,11 @@ void SpectrumAnalyzer::process (const AudioBufferView& buffer)
         sumSquares += (double) s * (double) s;
         if (s > peak) peak = s;
         else if (-s > peak) peak = -s;
+        if (haveRing)
+        {
+            ring[(std::size_t) ringPos] = s;
+            if (++ringPos == n) ringPos = 0;
+        }
     }
 
     peakHold = std::max (peak, peakHold - holdDecayPerBlock);
@@ -84,33 +94,28 @@ void SpectrumAnalyzer::process (const AudioBufferView& buffer)
 
     // FFT on every 2nd block; metering above runs on every block.
     if ((blockCounter++ & 1) == 0)
-        analyze (buffer);
+        analyze();
 }
 
-void SpectrumAnalyzer::analyze (const AudioBufferView& buffer)
+void SpectrumAnalyzer::analyze()
 {
     if (re.empty())
         return; // process() called before prepare()
 
     const int n = fft.size();
-    const int nch = std::min (buffer.numChannels(), 2);
-    const float* ch0 = buffer.channel (0);
-    const float* ch1 = nch > 1 ? buffer.channel (1) : nullptr;
-    const int frames = std::min (buffer.numFrames(), n);
 
-    // Copy the mono sum out first: the view is treated as strictly read-only.
-    for (int i = 0; i < frames; ++i)
-        re[(std::size_t) i] = ch1 != nullptr ? 0.5f * (ch0[i] + ch1[i]) : ch0[i];
-    std::fill (re.begin() + frames, re.end(), 0.0f);
+    // Window the ring oldest-first so the taper always covers the most recent
+    // n samples, whatever the block size.
     for (int i = 0; i < n; ++i)
     {
-        re[(std::size_t) i] *= window[(std::size_t) i];
+        re[(std::size_t) i] = ring[(std::size_t) ((ringPos + i) % n)] * window[(std::size_t) i];
         im[(std::size_t) i] = 0.0f;
     }
 
     fft.transform (re.data(), im.data());
 
     // Max magnitude per log band; a full-scale sine peaks at ~1.0 (A*N/4).
+    // EMA across analyses smooths band jitter for the GUI display.
     for (int b = 0; b < numBands; ++b)
     {
         float mag = 0.0f;
@@ -119,7 +124,9 @@ void SpectrumAnalyzer::analyze (const AudioBufferView& buffer)
             const float m = std::sqrt (re[k] * re[k] + im[k] * im[k]);
             if (m > mag) mag = m;
         }
-        band[b].store (std::min (1.0f, mag * bandNorm), std::memory_order_relaxed);
+        const float value = std::min (1.0f, mag * bandNorm);
+        const float prev = band[b].load (std::memory_order_relaxed);
+        band[b].store (0.7f * value + 0.3f * prev, std::memory_order_relaxed);
     }
 }
 }

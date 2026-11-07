@@ -13,7 +13,8 @@ class SpectrumView : public juce::Component
 {
 public:
     SpectrumView (SpectrumAnalyzer& inputAnalyzer, SpectrumAnalyzer& outputAnalyzer,
-                  const std::atomic<float>& correlationRef);
+                  const std::atomic<float>& correlationRef,
+                  const std::atomic<float>& compressorGrDb, const std::atomic<float>& limiterGrDb);
 
     void paint (juce::Graphics&) override;
 
@@ -21,6 +22,8 @@ private:
     SpectrumAnalyzer& analyzerIn;
     SpectrumAnalyzer& analyzerOut;
     const std::atomic<float>& correlation;
+    const std::atomic<float>& compressorGr;
+    const std::atomic<float>& limiterGr;
 
     juce::Colour bandColourIn { 0xff5a6472 };
     juce::Colour bandColourOut { 0xff4fb3a6 };

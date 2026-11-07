@@ -94,12 +94,12 @@ void lowShelfBoostsBass()
     eq.prepare ({ 48000.0, 512 });
     eq.setBand (0, 100.0f, 6.0f, 0.707f);
     TestBuffer buf (2, 256);
-    runBlocks (eq, buf, 10, 50.0, 0.25, 48000.0);
+    runBlocks (eq, buf, 16, 50.0, 0.25, 48000.0);
     // Well below the corner: close to the full +6 dB (2x). Inequality keeps it robust.
     CHECK (peakAmplitude (buf, 0) > 0.4f);
     CHECK (peakAmplitude (buf, 1) > 0.4f);
     // Far above the corner: nearly untouched.
-    runBlocks (eq, buf, 10, 5000.0, 0.25, 48000.0);
+    runBlocks (eq, buf, 16, 5000.0, 0.25, 48000.0);
     CHECK (std::fabs (peakAmplitude (buf, 0) - 0.25f) <= 0.25f * 0.10f);
     CHECK (std::fabs (peakAmplitude (buf, 1) - 0.25f) <= 0.25f * 0.10f);
 }
@@ -110,10 +110,10 @@ void highShelfBoostsTreble()
     eq.prepare ({ 48000.0, 512 });
     eq.setBand (3, 8000.0f, 6.0f, 0.707f);
     TestBuffer buf (2, 256);
-    runBlocks (eq, buf, 10, 10000.0, 0.25, 48000.0);
+    runBlocks (eq, buf, 16, 10000.0, 0.25, 48000.0);
     CHECK (peakAmplitude (buf, 0) > 0.4f);
     CHECK (peakAmplitude (buf, 1) > 0.4f);
-    runBlocks (eq, buf, 10, 200.0, 0.25, 48000.0);
+    runBlocks (eq, buf, 16, 200.0, 0.25, 48000.0);
     CHECK (std::fabs (peakAmplitude (buf, 0) - 0.25f) <= 0.25f * 0.10f);
     CHECK (std::fabs (peakAmplitude (buf, 1) - 0.25f) <= 0.25f * 0.10f);
 }
@@ -124,13 +124,13 @@ void peakingBandShapesOnlyCenter()
     eq.prepare ({ 48000.0, 512 });
     eq.setBand (1, 1000.0f, 12.0f, 1.0f);
     TestBuffer buf (2, 256);
-    runBlocks (eq, buf, 10, 1000.0, 0.125, 48000.0);
+    runBlocks (eq, buf, 16, 1000.0, 0.125, 48000.0);
     // At the center frequency the peaking gain is exact: +12 dB = 4x.
     CHECK (std::fabs (peakAmplitude (buf, 0) - 0.5f) <= 0.5f * 0.10f);
     CHECK (std::fabs (peakAmplitude (buf, 1) - 0.5f) <= 0.5f * 0.10f);
-    runBlocks (eq, buf, 10, 100.0, 0.25, 48000.0);
+    runBlocks (eq, buf, 16, 100.0, 0.25, 48000.0);
     CHECK (std::fabs (peakAmplitude (buf, 0) - 0.25f) <= 0.25f * 0.15f);
-    runBlocks (eq, buf, 10, 10000.0, 0.25, 48000.0);
+    runBlocks (eq, buf, 16, 10000.0, 0.25, 48000.0);
     CHECK (std::fabs (peakAmplitude (buf, 0) - 0.25f) <= 0.25f * 0.15f);
 }
 
@@ -182,6 +182,40 @@ void stabilityAndNoNaN()
     }
 }
 
+// S-03/U-02: automating band 1 freq over 24 blocks must stay smooth — no block-boundary
+// jumps (zipper) and no NaN/overflow while the coefficients ramp per sample.
+void smoothAutomationHasNoZipper()
+{
+    EqualizerProcessor eq;
+    eq.prepare ({ 48000.0, 512 });
+    TestBuffer buf (2, 256);
+    constexpr int blocks = 24;
+    float maxStep = 0.0f;
+    float prev[2] = { 0.0f, 0.0f };
+    bool havePrev = false;
+    for (int block = 0; block < blocks; ++block)
+    {
+        const float freq = 200.0f + (2000.0f - 200.0f) * float (block) / float (blocks - 1);
+        eq.setBand (1, freq, 0.0f, 1.0f);
+        fillSine (buf, block, buf.numFrames, 500.0, 0.25, 48000.0);
+        auto view = buf.view();
+        eq.process (view);
+        for (int c = 0; c < buf.numChannels; ++c)
+            for (int i = 0; i < buf.numFrames; ++i)
+            {
+                const float s = buf.sample (c, i);
+                CHECK (std::isfinite (s));
+                CHECK (std::fabs (s) <= 1.0f);
+                if (havePrev)
+                    maxStep = std::max (maxStep, std::fabs (s - prev[c]));
+                prev[c] = s;
+                havePrev = true;
+            }
+    }
+    // 500 Hz sine at 0.25 alone steps up to 2*pi*500*0.25/48000 ~= 0.0164 per sample.
+    CHECK (maxStep < 0.03f);
+}
+
 } // namespace
 
 int run_EqualizerTests()
@@ -192,5 +226,6 @@ int run_EqualizerTests()
     peakingBandShapesOnlyCenter();
     disabledBandIsSkipped();
     stabilityAndNoNaN();
+    smoothAutomationHasNoZipper();
     return failures;
 }

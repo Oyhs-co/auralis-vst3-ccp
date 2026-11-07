@@ -15,6 +15,8 @@ namespace auralis
 class AmbienceProcessor : public IDspProcessor
 {
 public:
+    AmbienceProcessor() noexcept; // width target 1.0: wet path passes original stereo until configured
+
     void prepare (const ProcessContext& ctx) override;
     void process (AudioBufferView& buffer) override;
     void reset() override;
@@ -23,8 +25,8 @@ public:
     void setMix (float mix01) noexcept;            // 0..1, smoothed over 30 ms
     void setPredelayMs (float ms) noexcept;        // 0..200
     void setDecaySeconds (float seconds) noexcept; // 0.1..10 (t60)
-    void setDamping (float damping01) noexcept;    // 0..1 (18 kHz .. 1.8 kHz)
-    void setWidth (float width01) noexcept;        // 0..1 (mono .. original)
+    void setDamping (float damping01) noexcept;    // 0..1 (18 kHz .. 1.8 kHz), coeff smoothed over 50 ms
+    void setWidth (float width01) noexcept;        // 0..1 (mono .. original), smoothed over 20 ms
 
     float getDecaySeconds() const noexcept { return decaySeconds; } // host tail length
 
@@ -33,6 +35,7 @@ private:
     static constexpr int baseLength[numLines] = { 1543, 2011, 2663, 3413, 4127, 5003, 5741, 6719 };
 
     void updatePredelaySamples() noexcept;
+    void updateDampCoeffTarget() noexcept;
 
     std::vector<float> line[numLines];
     int lineLength[numLines] = {};
@@ -48,9 +51,10 @@ private:
     float ap2X = 0.0f; float ap2Y = 0.0f;
 
     Smoother mixSmoother;
+    Smoother widthSmoother; // 20 ms
+    Smoother dampSmoother;  // applied damping coefficient, 50 ms — reverb changes are slow
     float decaySeconds = 2.0f;
     float damping = 0.0f;
-    float width = 1.0f;
     float predelayMs = 0.0f;
     double sampleRate = 48000.0;
 };

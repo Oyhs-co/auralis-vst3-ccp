@@ -11,11 +11,15 @@ namespace
 {
     constexpr double kTwoPi = 6.283185307179586476925286766559;
     constexpr double kSqrtTwo = 1.4142135623730950488016887242097;
+    constexpr double kInvSqrtTwo = 0.7071067811865476; // Butterworth Q
+    // Coefficients closer than this to target are snapped; inaudible by orders of magnitude.
+    constexpr double kCoeffEpsilon = 1e-9;
 }
 
 void EqualizerProcessor::prepare (const ProcessContext& ctx)
 {
     sampleRate = ctx.sampleRate;
+    smoothAlpha = 1.0 - std::exp (-1.0 / (smoothTimeSeconds * sampleRate));
     for (auto& b : bands)
     {
         std::fill (b.x1, b.x1 + maxChannels, 0.0f);
@@ -42,9 +46,15 @@ void EqualizerProcessor::setBand (int index, float freqHz, float gainDb, float q
     if (index < 0 || index >= maxBands)
         return;
     auto& b = bands[index];
-    b.freq = std::clamp (freqHz, 20.0f, 20000.0f);
-    b.gainDb = std::clamp (gainDb, -24.0f, 24.0f);
-    b.q = std::clamp (q, 0.1f, 20.0f);
+    const float f = std::clamp (freqHz, 20.0f, 20000.0f);
+    const float g = std::clamp (gainDb, -24.0f, 24.0f);
+    const float qq = std::clamp (q, 0.1f, 20.0f);
+    // Hosts resend unchanged values every block; exact float compare is intended.
+    if (f == b.freq && g == b.gainDb && qq == b.q)
+        return;
+    b.freq = f;
+    b.gainDb = g;
+    b.q = qq;
     b.dirty = true;
 }
 
@@ -64,8 +74,10 @@ void EqualizerProcessor::updateBand (Band& b) noexcept
     const double cosw0 = std::cos (w0);
     const double sinw0 = std::sin (w0);
     const bool isShelf = (&b == &bands[0] || &b == &bands[3]);
+    // Peaking uses the band Q; shelves use Butterworth Q = 1/sqrt(2)
+    // (cookbook shelf slope S = 1: alpha = sin(w0)/2 * sqrt(2)).
     const double Q = isShelf ? kSqrtTwo : b.q;
-    const double alpha = sinw0 / (2.0 * Q);
+    const double alpha = isShelf ? sinw0 * kInvSqrtTwo : sinw0 / (2.0 * Q);
 
     double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0, a0 = 1.0;
 
@@ -100,12 +112,11 @@ void EqualizerProcessor::updateBand (Band& b) noexcept
     }
 
     // Normalize
-    b.b0 = b0 / a0;
-    b.b1 = b1 / a0;
-    b.b2 = b2 / a0;
-    b.a1 = a1 / a0;
-    b.a2 = a2 / a0;
-    b.dirty = false;
+    b.tb0 = b0 / a0;
+    b.tb1 = b1 / a0;
+    b.tb2 = b2 / a0;
+    b.ta1 = a1 / a0;
+    b.ta2 = a2 / a0;
 }
 
 void EqualizerProcessor::process (AudioBufferView& buffer)
@@ -113,8 +124,41 @@ void EqualizerProcessor::process (AudioBufferView& buffer)
     const int nch = buffer.numChannels() < maxChannels ? buffer.numChannels() : maxChannels;
     const int nf = buffer.numFrames();
 
+    // Block prologue: compute target coefficients once per enabled dirty band.
+    for (auto& b : bands)
+        if (b.enabled && b.dirty)
+            updateBand (b);
+
     for (int i = 0; i < nf; ++i)
     {
+        // Per-sample coefficient smoothing (shared by all channels, so both channels
+        // always run on identical coefficients).
+        for (auto& b : bands)
+        {
+            if (! (b.enabled && b.dirty))
+                continue;
+
+            b.b0 += smoothAlpha * (b.tb0 - b.b0);
+            b.b1 += smoothAlpha * (b.tb1 - b.b1);
+            b.b2 += smoothAlpha * (b.tb2 - b.b2);
+            b.a1 += smoothAlpha * (b.ta1 - b.a1);
+            b.a2 += smoothAlpha * (b.ta2 - b.a2);
+
+            if (std::fabs (b.tb0 - b.b0) < kCoeffEpsilon
+             && std::fabs (b.tb1 - b.b1) < kCoeffEpsilon
+             && std::fabs (b.tb2 - b.b2) < kCoeffEpsilon
+             && std::fabs (b.ta1 - b.a1) < kCoeffEpsilon
+             && std::fabs (b.ta2 - b.a2) < kCoeffEpsilon)
+            {
+                b.b0 = b.tb0;
+                b.b1 = b.tb1;
+                b.b2 = b.tb2;
+                b.a1 = b.ta1;
+                b.a2 = b.ta2;
+                b.dirty = false;
+            }
+        }
+
         for (int c = 0; c < nch; ++c)
         {
             float x = buffer.channel (c)[i];
@@ -123,9 +167,6 @@ void EqualizerProcessor::process (AudioBufferView& buffer)
             {
                 if (!b.enabled)
                     continue;
-
-                if (b.dirty)
-                    updateBand (b);
 
                 float y = (float) (b.b0 * (double) x + b.b1 * (double) b.x1[c] + b.b2 * (double) b.x2[c]
                                    - b.a1 * (double) b.y1[c] - b.a2 * (double) b.y2[c]);
